@@ -4,12 +4,12 @@ classdef misc_behr_update_plots
     
     properties(Constant = true)
         start_date = '2012-01-01';
-        end_date = '2012-12-31';
-        behr_final_dir = '';
-        behr_nasa_brdf_vis_profs_dir = '';
-        behr_nasa_brdf_vis_dir = '';
-        behr_nasa_brdf_dir = '';
-        behr_nasa_only_dir = '';
+        end_date = '2012-01-01';
+        behr_final_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/5-PSM';
+        behr_nasa_brdf_vis_profs_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/4-NewProfs';
+        behr_nasa_brdf_vis_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/3-NewVis';
+        behr_nasa_brdf_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/2-BRDF';
+        behr_nasa_only_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/1-NASAv3';
     end
     
     methods(Static = true)
@@ -32,7 +32,7 @@ classdef misc_behr_update_plots
             G.checkState();
             
             save_dir = misc_behr_update_plots.behr_final_dir;
-            misc_behr_update_plots.make_behr_with_parameters('68760da', save_dir, do_overwrite);
+            misc_behr_update_plots.make_behr_with_parameters('631c643', save_dir, do_overwrite, true);
         end
         
         function make_behr_brdf_nasa_newvis_profs(do_overwrite)
@@ -48,7 +48,7 @@ classdef misc_behr_update_plots
             end
             
             save_dir = misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir;
-            misc_behr_update_plots.make_behr_with_parameters('29968dc', save_dir, do_overwrite);
+            misc_behr_update_plots.make_behr_with_parameters('11177fd', save_dir, do_overwrite, true);
         end
         
         
@@ -64,7 +64,7 @@ classdef misc_behr_update_plots
             end
             
             save_dir = misc_behr_update_plots.behr_nasa_brdf_vis_dir;
-            misc_behr_update_plots.make_behr_with_parameters('97eb5fe', save_dir, do_overwrite);
+            misc_behr_update_plots.make_behr_with_parameters('d64a80f1', save_dir, do_overwrite, false);
         end
         
         function make_behr_brdf_and_nasa(do_overwrite)
@@ -79,7 +79,7 @@ classdef misc_behr_update_plots
             end
             
             save_dir = misc_behr_update_plots.behr_nasa_brdf_dir;
-            misc_behr_update_plots.make_behr_with_parameters('5011827', save_dir, do_overwrite);
+            misc_behr_update_plots.make_behr_with_parameters('2018ae4', save_dir, do_overwrite, false);
         end
         
         
@@ -92,7 +92,7 @@ classdef misc_behr_update_plots
             end
             
             save_dir = misc_behr_update_plots.behr_nasa_only_dir;
-            misc_behr_update_plots.make_behr_with_parameters('c6e51dcd', save_dir, do_overwrite);
+            misc_behr_update_plots.make_behr_with_parameters('499b31d', save_dir, do_overwrite, false);
         end
     end
     
@@ -116,9 +116,14 @@ classdef misc_behr_update_plots
                 E.dir_dne(root_save_dir);
             end
             
+            sp_save_dir = fullfile(root_save_dir, 'SP_Files');
+            if ~exist(sp_save_dir, 'dir')
+                mkdir(sp_save_dir);
+            end
+            
             read_omno2_v_aug2012('start', misc_behr_update_plots.start_date,...
                 'end', misc_behr_update_plots.end_date,...
-                'sp_mat_dir', root_save_dir, 'overwrite', do_overwrite);
+                'sp_mat_dir', sp_save_dir, 'overwrite', do_overwrite);
             
             % For the monthly profiles, we rely on the default profile
             % choice to be monthly. This avoids issues with older
@@ -129,7 +134,7 @@ classdef misc_behr_update_plots
             end
             BEHR_main('start', misc_behr_update_plots.start_date,...
                 'end', misc_behr_update_plots.end_date,...
-                'sp_mat_dir', root_save_dir,...
+                'sp_mat_dir', sp_save_dir,...
                 'behr_mat_dir', monthly_save_dir,...
                 'overwrite', do_overwrite);
             
@@ -140,7 +145,7 @@ classdef misc_behr_update_plots
                 end
                 BEHR_main('start', misc_behr_update_plots.start_date,...
                     'end', misc_behr_update_plots.end_date,...
-                    'sp_mat_dir', root_save_dir,...
+                    'sp_mat_dir', sp_save_dir,...
                     'behr_mat_dir', daily_save_dir,...
                     'profile_mode', 'daily',...
                     'overwrite', do_overwrite);
