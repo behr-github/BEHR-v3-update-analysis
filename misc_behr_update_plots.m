@@ -28,6 +28,7 @@ classdef misc_behr_update_plots
             % Verify that the most up-to-date PSM code is active.
             G = GitChecker;
             G.addReqCommits(behr_paths.psm_dir, 'a861905');
+            G.addReqCommits(fullfile(behr_repo_dir, '..', 'Python Interface'), 'b6bc6e4');
             G.Strict = true;
             G.checkState();
             
@@ -92,7 +93,7 @@ classdef misc_behr_update_plots
             end
             
             save_dir = misc_behr_update_plots.behr_nasa_only_dir;
-            misc_behr_update_plots.make_behr_with_parameters('499b31d', save_dir, do_overwrite, false);
+            misc_behr_update_plots.make_behr_with_parameters('d889411', save_dir, do_overwrite, false);
         end
     end
     
