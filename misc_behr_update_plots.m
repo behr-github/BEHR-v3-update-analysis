@@ -6,6 +6,7 @@ classdef misc_behr_update_plots
         start_date = '2012-01-01';
         end_date = '2012-12-31';
         behr_final_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/5-PSM';
+        behr_final_cvm_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/5b-CVM';
         behr_nasa_brdf_vis_profs_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/4-NewProfs';
         behr_nasa_brdf_vis_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/3-NewVis';
         behr_nasa_brdf_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/2-BRDF';
@@ -37,6 +38,20 @@ classdef misc_behr_update_plots
             
             save_dir = misc_behr_update_plots.behr_final_dir;
             misc_behr_update_plots.make_behr_with_parameters('ddb101b', save_dir, do_overwrite, true);
+        end
+        
+        function make_behr_final_only_cvm(do_overwrite)
+            G = GitChecker;
+            G.addReqCommits(behr_paths.psm_dir, '49f77fc');
+            G.checkState();
+            
+            if ~exist('do_overwrite', 'var')
+                do_overwrite = false;
+            end
+            
+            sp_dir = fullfile(misc_behr_update_plots.behr_final_dir, 'SP_Files');
+            save_dir = misc_behr_update_plots.behr_final_cvm_dir;
+            misc_behr_update_plots.make_behr_with_parameters('d71805e', save_dir, do_overwrite, true, sp_dir);
         end
         
         function make_behr_brdf_nasa_newvis_profs(do_overwrite)
@@ -326,11 +341,15 @@ classdef misc_behr_update_plots
         % Helper functions for the production of the actual incr. changes %
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         
-        function make_behr_with_parameters(req_commit, root_save_dir, do_overwrite, has_daily_profs)
+        function make_behr_with_parameters(req_commit, root_save_dir, do_overwrite, has_daily_profs, alt_sp_dir)
             % Runs BEHR, saving files in ROOT_SAVE_DIR and overwriting
             % according to DO_OVERWRITE. This runs BEHR assuming the
             % BEHR_main and read_omno2_v_aug2012 functions take all the
-            % directories as parameters.
+            % directories as parameters. ALT_SP_DIR may be omitted, if so,
+            % this assumes that it needs to produce the SP files and place
+            % them in fullfile(ROOT_SAVE_DIR, 'SP_Files'). If not omitted,
+            % then it will assume it does not need to produce the SP files
+            % and that they can be found in ALT_SP_DIR.
             E = JLLErrors;
             my_dir = fileparts(mfilename('fullpath'));
             behr_dir = fullfile(my_dir, '..', 'BEHR');
@@ -350,9 +369,36 @@ classdef misc_behr_update_plots
                 mkdir(sp_save_dir);
             end
             
-            read_omno2_v_aug2012('start', misc_behr_update_plots.start_date,...
-                'end', misc_behr_update_plots.end_date,...
-                'sp_mat_dir', sp_save_dir, 'overwrite', do_overwrite);
+            if ~exist('alt_sp_dir', 'var')
+                do_sp = true;
+                alt_sp_dir = sp_save_dir;
+            else
+                if ~ischar(alt_sp_dir)
+                    E.badinput('"alt_sp_dir" must be a string');
+                elseif ~exist(alt_sp_dir, 'dir')
+                    E.dir_dne('SP load directory "%s" does not exist', alt_sp_dir);
+                end
+                do_sp = false;
+            end
+            
+            if do_sp
+                read_omno2_v_aug2012('start', misc_behr_update_plots.start_date,...
+                    'end', misc_behr_update_plots.end_date,...
+                    'sp_mat_dir', sp_save_dir, 'overwrite', do_overwrite);
+            else
+                sp_files = dir(fullfile(alt_sp_dir,'*.mat'));
+                sp_files = {sp_files.name};
+                datevec = datenum(misc_behr_update_plots.start_date):datenum(misc_behr_update_plots.end_date);
+                n_missing_files = 0;
+                for d=1:numel(datevec)
+                    this_pattern = sprintf('OMI_SP_v\\d-\\d[A-Z](rev\\d)?_%s.mat', datestr(datevec(d), 'yyyymmdd'));
+                    n_missing_files = (sum(~cellfun('isempty', regexp(sp_files, this_pattern, 'once'))) ~= 1) + n_missing_files;
+                end
+                
+                if n_missing_files > 0
+                    E.filenotfound('%d OMI_SP .mat files missing from %s', n_missing_files, alt_sp_dir);
+                end
+            end
             
             % For the monthly profiles, we rely on the default profile
             % choice to be monthly. This avoids issues with older
@@ -363,7 +409,7 @@ classdef misc_behr_update_plots
             end
             BEHR_main('start', misc_behr_update_plots.start_date,...
                 'end', misc_behr_update_plots.end_date,...
-                'sp_mat_dir', sp_save_dir,...
+                'sp_mat_dir', alt_sp_dir,...
                 'behr_mat_dir', monthly_save_dir,...
                 'overwrite', do_overwrite);
             
@@ -374,7 +420,7 @@ classdef misc_behr_update_plots
                 end
                 BEHR_main('start', misc_behr_update_plots.start_date,...
                     'end', misc_behr_update_plots.end_date,...
-                    'sp_mat_dir', sp_save_dir,...
+                    'sp_mat_dir', alt_sp_dir,...
                     'behr_mat_dir', daily_save_dir,...
                     'profile_mode', 'daily',...
                     'overwrite', do_overwrite);
