@@ -118,12 +118,27 @@ classdef misc_behr_update_plots
                 struct('dir', misc_behr_update_plots.behr_final_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly'}})...
             );
         
+            G_new_avg = GitChecker;
+            G_new_avg.Strict = false;
+            G_old_avg = GitChecker;
+            G_old_avg.Strict = false;
+            
+            G_new_avg.addReqCommits(behr_repo_dir,'b4dc2c3');
+            G_old_avg.addCommitRange(behr_repo_dir,'11177fd','11177fd');
+            
+            do_new_avg = G_new_avg.checkState();
+            do_old_avg = G_old_avg.checkState();
+            
+            if ~do_new_avg && ~do_old_avg
+                E.callError('git_status', 'Not in the proper commit range to do either the old or new averaging');
+            end
+            
             for a=1:numel(average_info)
                 for b=1:numel(average_info(a).data_fields)
-                    if average_info(a).use_new_avg
-                        % pass for now
-                    else
-                        misc_behr_update_plots.average_behr_old(average_info(a).dir, average_info(a).data_fields{b}, do_overwrite);
+                    if do_new_avg && average_info(a).use_new_avg
+                        misc_behr_update_plots.average_behr_old(average_info(a).dir, average_info(a).data_fields{b}, do_overwrite, true);
+                    elseif do_old_avg
+                        misc_behr_update_plots.average_behr_old(average_info(a).dir, average_info(a).data_fields{b}, do_overwrite, false);
                     end
                 end
             end
@@ -143,25 +158,166 @@ classdef misc_behr_update_plots
                          misc_behr_update_plots.behr_nasa_brdf_vis_dir,...
                          misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir,...
                          misc_behr_update_plots.behr_final_dir};
+            
+            use_outside = [true, true, true, true, false, false];
+            
+            outside = load(fullfile(behr_repo_dir, 'Utils', 'outside.mat'));
+            outside = ~logical(outside.outside);
                      
-            for a=1:numel(incr_dirs)-1
-                Fbase = dir(fullfile(incr_dirs{a}, '*.mat'));
+            %for a=1:numel(incr_dirs)
+            for a=numel(incr_dirs)
+                if a < numel(incr_dirs)
+                    base_ind = a;
+                    new_ind = a+1;
+                else
+                    % We'll use the last index to make the
+                    % "overall" change figures
+                    base_ind = 1;
+                    new_ind = a;
+                end
+                Fbase = dir(fullfile(incr_dirs{base_ind}, '*.mat'));
                 base_names = {Fbase.name};
-                Fnew = dir(fullfile(incr_dirs{a+1}, '*.mat'));
+                Fnew = dir(fullfile(incr_dirs{new_ind}, '*.mat'));
                 new_names = {Fnew.name};
                 for b=1:numel(base_names)
                     if ismember(base_names{b}, new_names)
-                        Dbase = load(fullfile(incr_dirs{a}, base_names{b}));
-                        Dnew = load(fullfile(incr_dirs{a+1}, base_names{b}));
+                        Dbase = load(fullfile(incr_dirs{base_ind}, base_names{b}));
+                        Dnew = load(fullfile(incr_dirs{new_ind}, base_names{b}));
                         
-                        abs_del = Dnew.no2_vcds - Dbase.no2_vcds;
-                        rel_del = reldiff(Dnew.no2_vcds, Dbase.no2_vcds)*100;
+                        if use_outside(base_ind)
+                            Dbase.no2_vcds(outside) = nan;
+                        end
+                        if use_outside(new_ind)
+                            Dnew.no2_vcds(outside) = nan;
+                        end
                         
-                        misc_behr_update_plots.plot_change_avg(Dbase.lon_grid, Dbase.lat_grid, abs_del, false, incr_dirs{a}, incr_dirs{a+1}, base_names{b});
-                        misc_behr_update_plots.plot_change_avg(Dbase.lon_grid, Dbase.lat_grid, rel_del, true, incr_dirs{a}, incr_dirs{a+1}, base_names{b});
+                        if ~isequal(size(Dnew.no2_vcds), size(Dbase.no2_vcds))
+                            % We choose to interpolate to the new
+                            % coordinates because the PSM grid is one
+                            % smaller in both dimensions than the old
+                            % method (due to the interpolation in
+                            % no2_column_map). This way we don't have to
+                            % worry about extrapolation, since the PSM grid
+                            % should be entirely inside the old grid.
+                            old_no2 = interp2(Dbase.lon_grid, Dbase.lat_grid, Dbase.no2_vcds, Dnew.lon_grid, Dnew.lat_grid);
+                        else
+                            old_no2 = Dbase.no2_vcds;
+                        end
+                        
+                        abs_del = Dnew.no2_vcds - old_no2;
+                        rel_del = reldiff(Dnew.no2_vcds, old_no2)*100;
+                        
+                        [title_str, quantity_name, unit_name] = misc_behr_update_plots.get_title_from_file_name(base_names{b}, incr_dirs{base_ind}, incr_dirs{new_ind});
+                        save_dir = fullfile(misc_behr_update_plots.figs_root_dir, 'IncrementTests');
+                        
+                        misc_behr_update_plots.plot_change_avg(Dnew.lon_grid, Dnew.lat_grid, abs_del, false, title_str, quantity_name, unit_name, save_dir);
+                        misc_behr_update_plots.plot_change_avg(Dnew.lon_grid, Dnew.lat_grid, rel_del, true, title_str, quantity_name, unit_name, save_dir);
                     end
                 end
             end
+        end
+        
+        
+        function plot_day_v_month_figures()
+            % This will, if available, plot the average difference between
+            % the daily and monthly profile retrievals within a single
+            % increment.
+            
+            % Only the increments with the new profiles have daily and
+            % monthly profile retrievals
+            incr_dirs = {misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir,...
+                         misc_behr_update_plots.behr_final_dir};
+                     
+            for a=1:numel(incr_dirs)
+                F = dir(fullfile(incr_dirs{a}, '*Daily.mat'));
+                for b=1:numel(F)
+                    monthly_file = strrep(F(b).name, 'Daily', 'Monthly');
+                    if ~exist(fullfile(incr_dirs{a}, monthly_file), 'file')
+                        continue
+                    end
+                    
+                    Ddaily = load(fullfile(incr_dirs{a}, F(b).name));
+                    Dmonthly = load(fullfile(incr_dirs{a}, monthly_file));
+                    
+                    abs_del = Ddaily.no2_vcds - Dmonthly.no2_vcds;
+                    rel_del = reldiff(Ddaily.no2_vcds, Dmonthly.no2_vcds)*100;
+                    
+                    [~, quantity_name, unit_name, time_period] = misc_behr_update_plots.get_title_from_file_name(monthly_file, incr_dirs{a}, incr_dirs{a});
+                    title_str = sprintf('Daily vs monthly profiles (%s, %s)', quantity_name, time_period); 
+                    save_dir = fullfile(misc_behr_update_plots.figs_root_dir, 'DailyVsMonthly');
+                    
+                    misc_behr_update_plots.plot_change_avg(Ddaily.lon_grid, Ddaily.lat_grid, abs_del, false, title_str, quantity_name, unit_name, save_dir);
+                    misc_behr_update_plots.plot_change_avg(Ddaily.lon_grid, Ddaily.lat_grid, rel_del, true, title_str, quantity_name, unit_name, save_dir);
+                end
+            end
+        end
+        
+        
+        function date_orbit = plot_psm_weights(start_date, end_date, use_daily)
+            E = JLLErrors;
+            
+            if ~exist('start_date','var')
+                start_date = datenum(ask_date('Enter the first date to examine weights for'));
+            else
+                start_date = validate_date(start_date);
+            end
+            if ~exist('end_date', 'var')
+                end_date = datenum(ask_date('Enter the last date to examine weights for'));
+            else
+                end_date = validate_date(end_date);
+            end
+            
+            if end_date < start_date
+                E.badinput('END_DATE must be >= START_DATE');
+            end
+            
+            use_daily = false; % for now, until we have daily profile PSM gridded data to examine
+            
+            if use_daily
+                E.notimplemented('Use daily profile PSM product');
+            else
+                load_path = fullfile(misc_behr_update_plots.behr_final_dir, 'MonthlyProfs');
+            end
+            
+            datevec = start_date:end_date;
+            regex_pattern = 'OMI_BEHR_v\\d-\\d[A-Z](rev\\d)?_%s\\.mat';
+            F = dir(fullfile(load_path, '*.mat'));
+            file_names = {F.name};
+            
+            weights = nan(500,1200,numel(datevec)*4);
+            no2_columns = nan(500,1200,numel(datevec)*4);
+            date_orbit = cell(1, numel(datevec)*4);
+            
+            ind = 1;
+            
+            for d=1:numel(datevec)
+                fprintf('Loading %d of %d\n', d, numel(datevec));
+                
+                file_pattern = sprintf(regex_pattern, datestr(datevec(d), 'yyyymmdd'));
+                xx = ~cellfun('isempty', regexp(file_names, file_pattern)); % we want the error to happen if more than one file matches the pattern too
+                if sum(xx) ~= 1
+                    E.filenotfound(file_pattern);
+                end
+                
+                D = load(fullfile(load_path, file_names{xx}));
+                for a=1:numel(D.OMI)
+                    if ind == 1
+                        lon = D.OMI(a).Longitude;
+                        lat = D.OMI(a).Latitude;
+                    end
+                    no2_columns(:,:,ind) = D.OMI(a).BEHRColumnAmountNO2Trop;
+                    weights(:,:,ind) = D.OMI(a).BEHRColumnAmountNO2TropWeights;
+                    date_orbit{ind} = sprintf('%s-Orbit%d', datestr(datevec(d),'yyyy-mm-dd'),a);
+                    ind = ind+1;
+                end
+            end
+            
+            no2_columns(:,:,ind:end) = [];
+            weights(:,:,ind:end) = [];
+            
+            [slon, slat] = state_outlines('not', 'ak', 'hi');
+            plot_slice_gui(no2_columns, lon, lat, slon, slat, 'NO2');
+            plot_slice_gui(weights, lon, lat, slon, slat, 'Weights');
         end
     end
     
@@ -229,7 +385,7 @@ classdef misc_behr_update_plots
         % Helper functions for the incremental change averages %
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         
-        function average_behr_old(data_dir, data_field, overwrite)
+        function average_behr_old(data_dir, data_field, overwrite, use_new_avg)
             djf_start = {'2012-01-01', '2012-12-01'};
             djf_end = {'2012-02-29', '2012-12-31'};
             jja_start = '2012-06-01';
@@ -245,9 +401,16 @@ classdef misc_behr_update_plots
             if ~overwrite && exist(save_name, 'file')
                 fprintf('%s exists\n', save_name);
             else
-                [~, no2_vcds, lon_grid, lat_grid, count_grid, avg_config] = no2_column_map_2014(djf_start, djf_end, lon_lim, lat_lim,...
-                    'mapfield', data_field, 'behrdir', monthly_dir, 'fileprefix', 'OMI_BEHR_v2-1C_',...
-                    'makefig', false);
+                if use_new_avg
+                    [no2_vcds, lon_grid, lat_grid] = psm_time_average(djf_start, djf_end, lon_lim, lat_lim,...
+                        'avgfield', data_field, 'behr_dir', monthly_dir);
+                    count_grid = [];
+                    avg_config = [];
+                else
+                    [~, no2_vcds, lon_grid, lat_grid, count_grid, avg_config] = no2_column_map_2014(djf_start, djf_end, lon_lim, lat_lim,...
+                        'mapfield', data_field, 'behrdir', monthly_dir, 'fileprefix', 'OMI_BEHR_v2-1C_',...
+                        'makefig', false);
+                end
                 fprintf('Saving as %s\n', save_name);
                 save(save_name, 'no2_vcds', 'lon_grid', 'lat_grid', 'count_grid', 'avg_config');
             end
@@ -256,9 +419,16 @@ classdef misc_behr_update_plots
             if ~overwrite && exist(save_name, 'file')
                 fprintf('%s exists\n', save_name);
             else
-                [~, no2_vcds, lon_grid, lat_grid, count_grid, avg_config] = no2_column_map_2014(jja_start, jja_end, lon_lim, lat_lim,...
-                    'mapfield', data_field, 'behrdir', monthly_dir, 'fileprefix', 'OMI_BEHR_v2-1C_',...
-                    'makefig', false);
+                if use_new_avg
+                    [no2_vcds, lon_grid, lat_grid] = psm_time_average(jja_start, jja_end, lon_lim, lat_lim,...
+                        'avgfield', data_field, 'behr_dir', monthly_dir);
+                    count_grid = [];
+                    avg_config = [];
+                else
+                    [~, no2_vcds, lon_grid, lat_grid, count_grid, avg_config] = no2_column_map_2014(jja_start, jja_end, lon_lim, lat_lim,...
+                        'mapfield', data_field, 'behrdir', monthly_dir, 'fileprefix', 'OMI_BEHR_v2-1C_',...
+                        'makefig', false);
+                end
                 
                 fprintf('Saving as %s\n', save_name);
                 save(save_name, 'no2_vcds', 'lon_grid', 'lat_grid', 'count_grid', 'avg_config');
@@ -271,9 +441,16 @@ classdef misc_behr_update_plots
                 if ~overwrite && exist(save_name, 'file')
                     fprintf('%s exists\n', save_name);
                 else
-                    [~, no2_vcds, lon_grid, lat_grid, count_grid, avg_config] = no2_column_map_2014(djf_start, djf_end, lon_lim, lat_lim,...
-                    'mapfield', data_field, 'behrdir', daily_dir, 'fileprefix', 'OMI_BEHR_v2-1C_',...
-                    'makefig', false);
+                    if use_new_avg
+                        [no2_vcds, lon_grid, lat_grid] = psm_time_average(djf_start, djf_end, lon_lim, lat_lim,...
+                            'avgfield', data_field, 'behr_dir', daily_dir);
+                        count_grid = [];
+                        avg_config = [];
+                    else
+                        [~, no2_vcds, lon_grid, lat_grid, count_grid, avg_config] = no2_column_map_2014(djf_start, djf_end, lon_lim, lat_lim,...
+                        'mapfield', data_field, 'behrdir', daily_dir, 'fileprefix', 'OMI_BEHR_v2-1C_',...
+                        'makefig', false);
+                    end
                 
                     fprintf('Saving as %s\n', save_name);
                     save(save_name, 'no2_vcds', 'lon_grid', 'lat_grid', 'count_grid', 'avg_config');
@@ -283,9 +460,16 @@ classdef misc_behr_update_plots
                 if ~overwrite && exist(save_name, 'file')
                     fprintf('%s exists\n', save_name);
                 else
-                    [~, no2_vcds, lon_grid, lat_grid, count_grid, avg_config] = no2_column_map_2014(jja_start, jja_end, lon_lim, lat_lim,...
-                    'mapfield', data_field, 'behrdir', daily_dir, 'fileprefix', 'OMI_BEHR_v2-1C_',...
-                    'makefig', false);
+                    if use_new_avg
+                        [no2_vcds, lon_grid, lat_grid] = psm_time_average(jja_start, jja_end, lon_lim, lat_lim,...
+                            'avgfield', data_field, 'behr_dir', daily_dir);
+                        count_grid = [];
+                        avg_config = [];
+                    else
+                        [~, no2_vcds, lon_grid, lat_grid, count_grid, avg_config] = no2_column_map_2014(jja_start, jja_end, lon_lim, lat_lim,...
+                        'mapfield', data_field, 'behrdir', daily_dir, 'fileprefix', 'OMI_BEHR_v2-1C_',...
+                        'makefig', false);
+                    end
                 
                     fprintf('Saving as %s\n', save_name);
                     save(save_name, 'no2_vcds', 'lon_grid', 'lat_grid', 'count_grid', 'avg_config');
@@ -293,7 +477,7 @@ classdef misc_behr_update_plots
             end
         end
         
-        function [title_str, quantity_str, unit_str] = get_title_from_file_name(filename, base_dir, new_dir)
+        function [title_str, quantity_str, unit_str, time_period] = get_title_from_file_name(filename, base_dir, new_dir)
             % Parses one of the average .mat files names to figure out what
             % the title string should be and the colorbar limits.
             E = JLLErrors;
@@ -330,10 +514,8 @@ classdef misc_behr_update_plots
             title_str = sprintf('%s vs %s - %s (%s, %s)', quantity_str, new_dir, base_dir, time_period, profs_used);
         end
         
-        function plot_change_avg(lon_grid, lat_grid, val_diff, is_rel_diff, base_dir, new_dir, file_name)
+        function plot_change_avg(lon_grid, lat_grid, val_diff, is_rel_diff, title_str, quantity_name, unit_name, save_dir)
             E = JLLErrors;
-            
-            [title_str, quantity_name, unit_name] = misc_behr_update_plots.get_title_from_file_name(file_name, base_dir, new_dir);
             
             if is_rel_diff
                 save_name = sprintf('Relative difference %s', title_str);
@@ -359,7 +541,6 @@ classdef misc_behr_update_plots
             cb.Label.String = cb_label;
             cb.FontSize = 14;
             
-            save_dir = fullfile(misc_behr_update_plots.figs_root_dir, 'IncrementTests');
             if exist(misc_behr_update_plots.figs_root_dir, 'dir') && ~exist(save_dir, 'dir')
                 mkdir(save_dir)
             elseif ~exist(misc_behr_update_plots.figs_root_dir, 'dir')
