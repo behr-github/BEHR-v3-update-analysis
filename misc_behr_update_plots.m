@@ -5,6 +5,7 @@ classdef misc_behr_update_plots
     properties(Constant = true)
         start_date = '2012-01-01';
         end_date = '2012-12-31';
+        behr_modis_quality_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/6-MODISQuality';
         behr_final_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/5-PSM';
         behr_final_cvm_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/5b-CVM';
         behr_nasa_brdf_vis_profs_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/4-NewProfs';
@@ -17,6 +18,24 @@ classdef misc_behr_update_plots
     end
     
     methods(Static = true)
+        function make_behr_modis_quality(do_overwrite)
+            % Produces the final version, but with MODIS albedo quality
+            % restricted to 2 or better.
+            if ~exist('do_overwrite', 'var')
+                do_overwrite = false;
+            end
+            
+            % Verify that the most up-to-date PSM code is active.
+            G = GitChecker;
+            G.addReqCommits(behr_paths.psm_dir, '7bd02b9');
+            G.addReqCommits(behr_paths.python_interface, 'a217fcd');
+            G.Strict = true;
+            G.checkState();
+            
+            save_dir = misc_behr_update_plots.behr_modis_quality_dir;
+            misc_behr_update_plots.make_behr_with_parameters('351da88', 'afd69ac', save_dir, do_overwrite, true);
+        end
+        
         function make_behr_final(do_overwrite)
             % Produces the final version, that includes:
             %   1) NASA SP v3 base
@@ -341,7 +360,7 @@ classdef misc_behr_update_plots
         % Helper functions for the production of the actual incr. changes %
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         
-        function make_behr_with_parameters(req_commit, root_save_dir, do_overwrite, has_daily_profs, alt_sp_dir)
+        function make_behr_with_parameters(req_commit, req_utils_commit, root_save_dir, do_overwrite, has_daily_profs, alt_sp_dir)
             % Runs BEHR, saving files in ROOT_SAVE_DIR and overwriting
             % according to DO_OVERWRITE. This runs BEHR assuming the
             % BEHR_main and read_omno2_v_aug2012 functions take all the
@@ -352,10 +371,12 @@ classdef misc_behr_update_plots
             % and that they can be found in ALT_SP_DIR.
             E = JLLErrors;
             my_dir = fileparts(mfilename('fullpath'));
-            behr_dir = fullfile(my_dir, '..', 'BEHR');
+            behr_dir = behr_paths.behr_core;
+            behr_utils = behr_paths.behr_utils;
             
             G = GitChecker;
             G.addCommitRange(behr_dir, req_commit, req_commit);
+            G.addCommitRange(behr_utils, req_utils_commit, req_utils_commit);
             G.Strict = true;
             
             G.checkState();
