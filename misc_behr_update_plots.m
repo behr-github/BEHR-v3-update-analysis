@@ -5,6 +5,7 @@ classdef misc_behr_update_plots
     properties(Constant = true)
         start_date = '2012-01-01';
         end_date = '2012-12-31';
+        behr_modis_quality_best_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/6b-MODISQualityBest';
         behr_modis_quality_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/6-MODISQuality';
         behr_final_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/5-PSM';
         behr_final_cvm_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/5b-CVM';
@@ -18,6 +19,24 @@ classdef misc_behr_update_plots
     end
     
     methods(Static = true)
+        function make_behr_modis_quality_best(do_overwrite)
+            % Produces the final version, but with MODIS albedo quality
+            % restricted to 2 or better.
+            if ~exist('do_overwrite', 'var')
+                do_overwrite = false;
+            end
+            
+            % Verify that the most up-to-date PSM code is active.
+            G = GitChecker;
+            G.addReqCommits(behr_paths.psm_dir, '7bd02b9');
+            G.addReqCommits(behr_paths.python_interface, 'a217fcd');
+            G.Strict = true;
+            G.checkState();
+            
+            save_dir = misc_behr_update_plots.behr_modis_best_quality_dir;
+            misc_behr_update_plots.make_behr_with_parameters('bbdc057', 'afd69ac', save_dir, do_overwrite, true);
+        end
+        
         function make_behr_modis_quality(do_overwrite)
             % Produces the final version, but with MODIS albedo quality
             % restricted to 2 or better.
@@ -149,7 +168,9 @@ classdef misc_behr_update_plots
                 struct('dir', misc_behr_update_plots.behr_nasa_brdf_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'MODISAlbedo'}}),...
                 struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly'}}),...
                 struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly'}}),...
-                struct('dir', misc_behr_update_plots.behr_final_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly'}})...
+                struct('dir', misc_behr_update_plots.behr_final_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly'}}),...
+                struct('dir', misc_behr_update_plots.behr_final_cvm_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
+                struct('dir', misc_behr_update_plots.behr_modis_quality_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}})...
             );
         
             G_new_avg = GitChecker;
@@ -157,8 +178,8 @@ classdef misc_behr_update_plots
             G_old_avg = GitChecker;
             G_old_avg.Strict = false;
             
-            G_new_avg.addReqCommits(behr_repo_dir,'b4dc2c3');
-            G_old_avg.addCommitRange(behr_repo_dir,'11177fd','11177fd');
+            G_new_avg.addReqCommits(behr_analysis_repo_dir,'fffce59');
+            G_old_avg.addCommitRange(behr_analysis_repo_dir,'f4dd1e4','f4dd1e4');
             
             do_new_avg = G_new_avg.checkState();
             do_old_avg = G_old_avg.checkState();
@@ -191,15 +212,19 @@ classdef misc_behr_update_plots
                          misc_behr_update_plots.behr_nasa_brdf_dir,...
                          misc_behr_update_plots.behr_nasa_brdf_vis_dir,...
                          misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir,...
-                         misc_behr_update_plots.behr_final_dir};
+                         misc_behr_update_plots.behr_final_dir,...
+                         misc_behr_update_plots.behr_final_cvm_dir,...
+                         misc_behr_update_plots.behr_modis_quality_dir};
             
-            use_outside = [true, true, true, true, false, false];
+            % Use the "outside.mat" file to clean up the plots. Must be the
+            % same length as incr_dirs
+            use_outside = [true, true, true, true, false, false, false, false];
             
-            outside = load(fullfile(behr_repo_dir, 'Utils', 'outside.mat'));
+            outside = load(fullfile(behr_analysis_repo_dir, 'Utils', 'outside.mat'));
             outside = ~logical(outside.outside);
                      
-            %for a=1:numel(incr_dirs)
-            for a=numel(incr_dirs)
+            for a=1:numel(incr_dirs)
+            %for a=numel(incr_dirs)
                 if a < numel(incr_dirs)
                     base_ind = a;
                     new_ind = a+1;
@@ -217,6 +242,12 @@ classdef misc_behr_update_plots
                     if ismember(base_names{b}, new_names)
                         Dbase = load(fullfile(incr_dirs{base_ind}, base_names{b}));
                         Dnew = load(fullfile(incr_dirs{new_ind}, base_names{b}));
+                        
+                        if isscalar(Dbase.no2_vcds) || isscalar(Dnew.no2_vcds)
+                            % psm_time_average returns a scalar NaN if, for
+                            % whatever reason, no valid files are found.
+                            continue
+                        end
                         
                         if use_outside(base_ind)
                             Dbase.no2_vcds(outside) = nan;
