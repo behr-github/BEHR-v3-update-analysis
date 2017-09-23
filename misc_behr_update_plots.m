@@ -5,23 +5,45 @@ classdef misc_behr_update_plots
     properties(Constant = true)
         start_date = '2012-01-01';
         end_date = '2012-12-31';
-        behr_modis_quality_best_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/6b-MODISQualityBest';
-        behr_modis_quality_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/6-MODISQuality';
-        behr_final_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/5-PSM';
-        behr_final_cvm_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/5b-CVM';
-        behr_nasa_brdf_vis_profs_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/4-NewProfs';
-        behr_nasa_brdf_vis_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/3-NewVis';
-        behr_nasa_brdf_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/2-BRDF';
-        behr_nasa_only_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/1-NASAv3';
-        behr_v2_1C_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/IncrementTests/0-v2.1C';
+        behr_modis_ocean_mask_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/6c-MODISOceanMask';
+        behr_modis_quality_best_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/6b-MODISQualityBest';
+        behr_modis_quality_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/6-MODISQuality';
+        behr_final_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/5-PSM';
+        behr_final_cvm_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/5b-CVM';
+        behr_nasa_brdf_vis_profs_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/4-NewProfs';
+        behr_nasa_brdf_vis_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/3-NewVis';
+        behr_nasa_brdf_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/2-BRDF';
+        behr_nasa_only_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/1-NASAv3';
+        behr_v2_1C_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/0-v2.1C';
+        
+        wrf_path_v2 = '/Volumes/share-sat/SAT/BEHR/Monthly_NO2_Profiles';
         
         figs_root_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Figures';
     end
     
     methods(Static = true)
+        function make_behr_modis_ocean_mask(do_overwrite)
+            % Produces the final version, but with MODIS albedo quality
+            % restricted to 2 or better and using the ocean mask to
+            % determine where to use the look up table.
+            if ~exist('do_overwrite', 'var')
+                do_overwrite = false;
+            end
+            
+            % Verify that the most up-to-date PSM code is active.
+            G = GitChecker;
+            G.addReqCommits(behr_paths.psm_dir, '7bd02b9');
+            G.addReqCommits(behr_paths.python_interface, 'a217fcd');
+            G.Strict = true;
+            G.checkState();
+            
+            save_dir = misc_behr_update_plots.behr_modis_ocean_mask_dir;
+            misc_behr_update_plots.make_behr_with_parameters('4cbe433', '4398fe7', save_dir, do_overwrite, true);
+        end
+        
         function make_behr_modis_quality_best(do_overwrite)
             % Produces the final version, but with MODIS albedo quality
-            % restricted to 2 or better.
+            % restricted to 0 = best.
             if ~exist('do_overwrite', 'var')
                 do_overwrite = false;
             end
@@ -170,7 +192,8 @@ classdef misc_behr_update_plots
                 struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly'}}),...
                 struct('dir', misc_behr_update_plots.behr_final_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly'}}),...
                 struct('dir', misc_behr_update_plots.behr_final_cvm_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
-                struct('dir', misc_behr_update_plots.behr_modis_quality_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}})...
+                struct('dir', misc_behr_update_plots.behr_modis_quality_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
+                struct('dir', misc_behr_update_plots.behr_modis_quality_best_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}})...
             );
         
             G_new_avg = GitChecker;
@@ -206,6 +229,8 @@ classdef misc_behr_update_plots
             % average files, figure out which two files to compare, and
             % plot the difference.
             
+            E = JLLErrors;
+            
             % These must be in the order they are to be compared
             incr_dirs = {misc_behr_update_plots.behr_v2_1C_dir,...
                          misc_behr_update_plots.behr_nasa_only_dir,...
@@ -214,11 +239,16 @@ classdef misc_behr_update_plots
                          misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir,...
                          misc_behr_update_plots.behr_final_dir,...
                          misc_behr_update_plots.behr_final_cvm_dir,...
-                         misc_behr_update_plots.behr_modis_quality_dir};
+                         misc_behr_update_plots.behr_modis_quality_dir,...
+                         misc_behr_update_plots.behr_modis_quality_best_dir};
             
             % Use the "outside.mat" file to clean up the plots. Must be the
             % same length as incr_dirs
-            use_outside = [true, true, true, true, false, false, false, false];
+            use_outside = [true, true, true, true, false, false, false, false, false];
+            
+            if numel(use_outside) ~= numel(incr_dirs)
+                E.sizeMismatch('incr_dirs', 'use_outside');
+            end
             
             outside = load(fullfile(behr_analysis_repo_dir, 'Utils', 'outside.mat'));
             outside = ~logical(outside.outside);
@@ -384,6 +414,30 @@ classdef misc_behr_update_plots
             plot_slice_gui(no2_columns, lon, lat, slon, slat, 'NO2');
             plot_slice_gui(weights, lon, lat, slon, slat, 'Weights');
         end
+        
+        
+        function plot_profile_differences(date_in, daily_or_monthly, utc_hour)
+            % Plot the difference between the version 2 and version 3
+            % profiles.
+            
+            if ~exist('date_in', 'var')
+                date_in = ask_date('What date should we plot?');
+            end
+            if ~exist('daily_or_monthly', 'var')
+                daily_or_monthly = ask_multichoice('Use daily or monthly new profiles?', {'daily', 'monthly'}, 'list', true);
+            end
+            if ~exist('utc_hour', 'var')
+                if strcmpi(daily_or_monthly, 'daily')
+                    utc_hour = ask_number('Enter the UTC hour to plot (0-23)', 'testfxn', @(x) isscalar(x) && x >= 0 && x <= 23, 'testmsg', 'Value must be between 0 and 23');
+                else
+                    utc_hour = 0;
+                end
+            end
+            
+            new_wrf_prof = find_wrf_path(daily_or_monthly, date_in);
+            old_wrf_prof = misc_behr_update_plots.wrf_path_v2;
+            compare_old_new_profiles(date_in, new_wrf_prof, old_wrf_prof, daily_or_monthly, utc_hour);
+        end
     end
     
     methods(Static = true, Access = private)
@@ -500,7 +554,7 @@ classdef misc_behr_update_plots
                 fprintf('%s exists\n', save_name);
             else
                 if use_new_avg
-                    [no2_vcds, lon_grid, lat_grid] = psm_time_average(djf_start, djf_end, lon_lim, lat_lim,...
+                    [no2_vcds, lon_grid, lat_grid] = behr_time_average(djf_start, djf_end, lon_lim, lat_lim,...
                         'avgfield', data_field, 'behr_dir', monthly_dir);
                     count_grid = [];
                     avg_config = [];
@@ -518,7 +572,7 @@ classdef misc_behr_update_plots
                 fprintf('%s exists\n', save_name);
             else
                 if use_new_avg
-                    [no2_vcds, lon_grid, lat_grid] = psm_time_average(jja_start, jja_end, lon_lim, lat_lim,...
+                    [no2_vcds, lon_grid, lat_grid] = behr_time_average(jja_start, jja_end, lon_lim, lat_lim,...
                         'avgfield', data_field, 'behr_dir', monthly_dir);
                     count_grid = [];
                     avg_config = [];
@@ -540,7 +594,7 @@ classdef misc_behr_update_plots
                     fprintf('%s exists\n', save_name);
                 else
                     if use_new_avg
-                        [no2_vcds, lon_grid, lat_grid] = psm_time_average(djf_start, djf_end, lon_lim, lat_lim,...
+                        [no2_vcds, lon_grid, lat_grid] = behr_time_average(djf_start, djf_end, lon_lim, lat_lim,...
                             'avgfield', data_field, 'behr_dir', daily_dir);
                         count_grid = [];
                         avg_config = [];
@@ -559,7 +613,7 @@ classdef misc_behr_update_plots
                     fprintf('%s exists\n', save_name);
                 else
                     if use_new_avg
-                        [no2_vcds, lon_grid, lat_grid] = psm_time_average(jja_start, jja_end, lon_lim, lat_lim,...
+                        [no2_vcds, lon_grid, lat_grid] = behr_time_average(jja_start, jja_end, lon_lim, lat_lim,...
                             'avgfield', data_field, 'behr_dir', daily_dir);
                         count_grid = [];
                         avg_config = [];
