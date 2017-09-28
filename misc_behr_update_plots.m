@@ -5,6 +5,7 @@ classdef misc_behr_update_plots
     properties(Constant = true)
         start_date = '2012-01-01';
         end_date = '2012-12-31';
+        behr_lon_def_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/7-TemperatureLonDef';
         behr_modis_ocean_mask_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/6c-MODISOceanMask';
         behr_modis_quality_best_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/6b-MODISQualityBest';
         behr_modis_quality_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/6-MODISQuality';
@@ -22,6 +23,25 @@ classdef misc_behr_update_plots
     end
     
     methods(Static = true)
+        function make_behr_londef(do_overwrite)
+            % Produces the final version, but with MODIS albedo quality
+            % restricted to 2 or better and using the ocean mask to
+            % determine where to use the look up table.
+            if ~exist('do_overwrite', 'var')
+                do_overwrite = false;
+            end
+            
+            % Verify that the most up-to-date PSM code is active.
+            G = GitChecker;
+            G.addReqCommits(behr_paths.psm_dir, '7bd02b9');
+            G.addReqCommits(behr_paths.python_interface, 'a217fcd');
+            G.Strict = true;
+            G.checkState();
+            
+            save_dir = misc_behr_update_plots.behr_lon_def_dir;
+            misc_behr_update_plots.make_behr_with_parameters('4cbe433', 'cca8970', save_dir, do_overwrite, true);
+        end
+        
         function make_behr_modis_ocean_mask(do_overwrite)
             % Produces the final version, but with MODIS albedo quality
             % restricted to 2 or better and using the ocean mask to
@@ -55,7 +75,7 @@ classdef misc_behr_update_plots
             G.Strict = true;
             G.checkState();
             
-            save_dir = misc_behr_update_plots.behr_modis_best_quality_dir;
+            save_dir = misc_behr_update_plots.behr_modis_quality_best_dir;
             misc_behr_update_plots.make_behr_with_parameters('bbdc057', 'afd69ac', save_dir, do_overwrite, true);
         end
         
@@ -74,7 +94,7 @@ classdef misc_behr_update_plots
             G.checkState();
             
             save_dir = misc_behr_update_plots.behr_modis_quality_dir;
-            misc_behr_update_plots.make_behr_with_parameters('351da88', 'afd69ac', save_dir, do_overwrite, true);
+            misc_behr_update_plots.make_behr_with_parameters('c8689f9a', 'afd69ac', save_dir, do_overwrite, true);
         end
         
         function make_behr_final(do_overwrite)
