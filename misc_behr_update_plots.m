@@ -5,6 +5,7 @@ classdef misc_behr_update_plots
     properties(Constant = true)
         start_date = '2012-01-01';
         end_date = '2012-12-31';
+        behr_offset_fix_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/8-OffsetFix';
         behr_lon_def_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/7-TemperatureLonDef';
         behr_modis_ocean_mask_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/6c-MODISOceanMask';
         behr_modis_quality_best_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/6b-MODISQualityBest';
@@ -23,10 +24,28 @@ classdef misc_behr_update_plots
     end
     
     methods(Static = true)
+        function make_behr_modis_quality_offset_fix(do_overwrite)
+            % Produces the final version, but with the fix to HDFREADMODIS
+            % so that the quality is actually restricted to 2 or better
+            % (not 3 or better)
+            if ~exist('do_overwrite', 'var')
+                do_overwrite = false;
+            end
+            
+            % Verify that the most up-to-date PSM code is active.
+            G = GitChecker;
+            G.addReqCommits(behr_paths.psm_dir, '58ef9fb');
+            G.addReqCommits(behr_paths.python_interface, 'a217fcd');
+            G.Strict = true;
+            G.checkState();
+            
+            save_dir = misc_behr_update_plots.behr_lon_def_dir;
+            misc_behr_update_plots.make_behr_with_parameters('4cbe433', '89e795c', save_dir, do_overwrite, true);
+        end
+        
         function make_behr_londef(do_overwrite)
-            % Produces the final version, but with MODIS albedo quality
-            % restricted to 2 or better and using the ocean mask to
-            % determine where to use the look up table.
+            % Produces the final version, but with the longitude definition
+            % in the temperature profiles fixed.
             if ~exist('do_overwrite', 'var')
                 do_overwrite = false;
             end
@@ -213,7 +232,9 @@ classdef misc_behr_update_plots
                 struct('dir', misc_behr_update_plots.behr_final_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly'}}),...
                 struct('dir', misc_behr_update_plots.behr_final_cvm_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
                 struct('dir', misc_behr_update_plots.behr_modis_quality_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
-                struct('dir', misc_behr_update_plots.behr_modis_quality_best_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}})...
+                struct('dir', misc_behr_update_plots.behr_modis_quality_best_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
+                struct('dir', misc_behr_update_plots.behr_modis_ocean_mask_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo','BEHRAMFTrop'}}),...
+                struct('dir', misc_behr_update_plots.behr_lon_def_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRAMFTrop'}})...
             );
         
             G_new_avg = GitChecker;
@@ -306,30 +327,69 @@ classdef misc_behr_update_plots
                             Dnew.no2_vcds(outside) = nan;
                         end
                         
-                        if ~isequal(size(Dnew.no2_vcds), size(Dbase.no2_vcds))
-                            % We choose to interpolate to the new
-                            % coordinates because the PSM grid is one
-                            % smaller in both dimensions than the old
-                            % method (due to the interpolation in
-                            % no2_column_map). This way we don't have to
-                            % worry about extrapolation, since the PSM grid
-                            % should be entirely inside the old grid.
-                            old_no2 = interp2(Dbase.lon_grid, Dbase.lat_grid, Dbase.no2_vcds, Dnew.lon_grid, Dnew.lat_grid);
-                        else
-                            old_no2 = Dbase.no2_vcds;
-                        end
-                        
-                        abs_del = Dnew.no2_vcds - old_no2;
-                        rel_del = reldiff(Dnew.no2_vcds, old_no2)*100;
-                        
                         [title_str, quantity_name, unit_name] = misc_behr_update_plots.get_title_from_file_name(base_names{b}, incr_dirs{base_ind}, incr_dirs{new_ind});
                         save_dir = fullfile(misc_behr_update_plots.figs_root_dir, 'IncrementTests');
                         
-                        misc_behr_update_plots.plot_change_avg(Dnew.lon_grid, Dnew.lat_grid, abs_del, false, title_str, quantity_name, unit_name, save_dir);
-                        misc_behr_update_plots.plot_change_avg(Dnew.lon_grid, Dnew.lat_grid, rel_del, true, title_str, quantity_name, unit_name, save_dir);
+                        misc_behr_update_plots.plot_change_avg(Dbase.lon_grid, Dbase.lat_grid, Dbase.no2_vcds, Dnew.lon_grid, Dnew.lat_grid, Dnew.no2_vcds, false, title_str, quantity_name, unit_name, save_dir);
+                        misc_behr_update_plots.plot_change_avg(Dbase.lon_grid, Dbase.lat_grid, Dbase.no2_vcds, Dnew.lon_grid, Dnew.lat_grid, Dnew.no2_vcds, true, title_str, quantity_name, unit_name, save_dir);
                     end
                 end
             end
+        end
+        
+        
+        function plot_single_incr_diff()
+            % Get all of the directories that would contain average files
+            fns = fieldnames(misc_behr_update_plots);
+            data_dirs = {};
+            for a=1:numel(fns)
+                the_dir = misc_behr_update_plots.(fns{a});
+                if ~isempty(strfind(the_dir, '/IncrementTests/')) && exist(the_dir, 'dir')
+                    data_dirs{end+1} = the_dir;
+                end
+            end
+            
+            base_dir = ask_multichoice('Select the base directory for the difference', data_dirs, 'list', true);
+            new_opts = veccat(data_dirs, {'No difference'});
+            new_dir = ask_multichoice('Select the new directory for the difference', new_opts, 'list', true);
+            
+            diff_bool = ~strcmpi(new_dir, 'No difference');
+                
+            
+            % Now find all the data fields that the two directories have in
+            % common
+            Fbase = dir(fullfile(base_dir, '*.mat'));
+            if diff_bool
+                Fnew = dir(fullfile(new_dir, '*.mat'));
+                xx_base = find_common_elements({Fbase.name}, {Fnew.name}, 'nodup');
+            else
+                xx_base = true(size(Fbase));
+            end
+            avg_files = {Fbase(xx_base).name};
+            
+            comparison_file = ask_multichoice('Select the file to compare:', avg_files, 'list', true);
+            if diff_bool
+                if ask_yn('Do a relative difference? (absolute if no)')
+                    diff_type = 'rel';
+                else
+                    diff_type = 'abs';
+                end
+            else
+                diff_type = 'none';
+            end
+            
+            Dbase = load(fullfile(base_dir, comparison_file));
+            if diff_bool
+                Dnew = load(fullfile(new_dir, comparison_file));
+                [title_str, quantity_name, unit_name] = misc_behr_update_plots.get_title_from_file_name(comparison_file, base_dir, new_dir);
+            else
+                Dnew = Dbase;
+                Dbase.no2_vcds = zeros(size(Dbase.no2_vcds));
+                [title_str, quantity_name, unit_name] = misc_behr_update_plots.get_title_from_file_name(comparison_file, base_dir);
+            end
+            
+            
+            misc_behr_update_plots.plot_change_avg(Dbase.lon_grid, Dbase.lat_grid, Dbase.no2_vcds, Dnew.lon_grid, Dnew.lat_grid, Dnew.no2_vcds, diff_type, title_str, quantity_name, unit_name, '');
         end
         
         
@@ -457,6 +517,65 @@ classdef misc_behr_update_plots
             new_wrf_prof = find_wrf_path(daily_or_monthly, date_in);
             old_wrf_prof = misc_behr_update_plots.wrf_path_v2;
             compare_old_new_profiles(date_in, new_wrf_prof, old_wrf_prof, daily_or_monthly, utc_hour);
+        end
+        
+        
+        function modis_avg_quality(start_date, end_date)
+            % Averages the quality flags in the MODIS MCD43C1 data between
+            % the dates specified and plots it. If no inputs given, asks
+            % for the dates interactively
+            E = JLLErrors;
+            
+            if ~exist('start_date','var')
+                start_date = ask_date('Enter the first date to consider for MODIS data');
+            end
+            if ~exist('end_date', 'var')
+                end_date = ask_date('Enter the last date to consider for MODIS data');
+            end
+            
+            lonlim = [-125 -65];
+            latlim = [25 50];
+            
+            dvec = datenum(start_date):datenum(end_date);
+            [band3_lons, band3_lats] = modis_cmg_latlon(0.05, [-180, 180], [-90, 90], true);
+            yy = band3_lats(:,1) >= min(latlim) & band3_lats(:,1) <= max(latlim);
+            xx = band3_lons(1,:) >= min(lonlim) & band3_lons(1,:) <= max(lonlim);
+            
+            band3_lons = band3_lons(yy,xx);
+            band3_lats = band3_lats(yy,xx);
+            avg_quality = zeros(size(band3_lons));
+            count = zeros(size(band3_lons));
+            for a=1:numel(dvec)
+                fprintf('Loading file from %s\n', datestr(dvec(a)));
+                % Figure out the MODIS file
+                year_str = datestr(dvec(a), 'yyyy');
+                modis_file_pat = sprintf('MCD43C1.A%s%03d.006*.hdf', year_str, modis_date_to_day(dvec(a)));
+                F = dir(fullfile(behr_paths.mcd43c1_dir, year_str, modis_file_pat));
+                if numel(F) > 1
+                    E.toomanyfiles(modis_file_pat);
+                elseif numel(F) < 1
+                    E.filenotfound(modis_file_pat);
+                else
+                    mcd43_info = hdfinfo(fullfile(behr_paths.mcd43c1_dir, year_str, F(1).name));
+                    wstate = warning('off','all'); % suppress warnings about missing scale factors, it's ok
+                    brdf_quality = hdfreadmodis(mcd43_info.Filename, hdfdsetname(mcd43_info,1,1,'BRDF_Quality'));
+                    warning(wstate);
+                    brdf_quality = brdf_quality(yy,xx);
+                end
+                nans = isnan(brdf_quality);
+                brdf_quality(nans) = 0;
+                avg_quality = avg_quality + brdf_quality;
+                count = count + double(~nans);
+            end
+            avg_quality = avg_quality ./ count;
+            
+            figure;
+            pcolor(band3_lons, band3_lats, avg_quality);
+            shading flat;
+            colorbar;
+            colormap(jet);
+            state_outlines('k','not','ak','hi');
+            title(sprintf('Avg. MCD43C1 quality from %s to %s', start_date, end_date));
         end
     end
     
@@ -654,9 +773,13 @@ classdef misc_behr_update_plots
             % the title string should be and the colorbar limits.
             E = JLLErrors;
             
+            is_diff = exist('new_dir', 'var');
+            
             [~, filename] = fileparts(filename); % remove any path or extension
             [~, base_dir] = fileparts(base_dir);
-            [~, new_dir] = fileparts(new_dir);
+            if is_diff
+                [~, new_dir] = fileparts(new_dir);
+            end
             
             name_parts = strsplit(filename, '-');
             
@@ -669,6 +792,9 @@ classdef misc_behr_update_plots
                 case 'BEHRColumnAmountNO2TropVisOnly'
                     quantity_str = 'Vis NO_2 VCD';
                     unit_str = 'molec. cm^{-2}';
+                case 'BEHRAMFTrop'
+                    quantity_str = 'AMF';
+                    unit_str = 'unitless';
                 case 'MODISAlbedo'
                     quantity_str = 'Surf Refl';
                     unit_str = 'unitless';
@@ -683,29 +809,61 @@ classdef misc_behr_update_plots
             % Monthly or daily profiles used
             profs_used = sprintf('%s Profs', name_parts{3});
             
-            title_str = sprintf('%s vs %s - %s (%s, %s)', quantity_str, new_dir, base_dir, time_period, profs_used);
+            if is_diff
+                title_str = sprintf('%s: %s vs %s (%s, %s)', quantity_str, new_dir, base_dir, time_period, profs_used);
+            else
+                title_str = sprintf('%s: %s (%s, %s)', quantity_str, base_dir, time_period, profs_used);
+            end
         end
         
-        function plot_change_avg(lon_grid, lat_grid, val_diff, is_rel_diff, title_str, quantity_name, unit_name, save_dir)
+        function plot_change_avg(old_lon_grid, old_lat_grid, old_val, new_lon_grid, new_lat_grid, new_val, diff_type, title_str, quantity_name, unit_name, save_dir)
+            % pass an empty string as save_dir to just plot the figure
+            % without saving or closing it
             E = JLLErrors;
             
-            if is_rel_diff
-                save_name = sprintf('Relative difference %s', title_str);
-                cb_label = sprintf(tex_in_printf('%%\Delta %s (%s)'), quantity_name, unit_name);
-                cb_max_lims = [-100 100];
+            if ~isequal(size(old_val), size(new_val))
+                % Very simplistic check to see which is smaller, assumes
+                % that the smaller one's coordinates are all inside the
+                % larger one.
+                if numel(old_val) < numel(new_val)
+                    new_val = interp2(new_lon_grid, new_lat_grid, new_val, old_lon_grid, old_lat_grid);
+                    lon_grid = old_lon_grid;
+                    lat_grid = old_lat_grid;
+                else
+                    old_val = interp2(old_lon_grid, old_lat_grid, old_val, new_lon_grid, new_lat_grid);
+                    lon_grid = new_lon_grid;
+                    lat_grid = new_lat_grid;
+                end
             else
-                save_name = sprintf('Absolute difference %s', title_str);
-                cb_label = sprintf(tex_in_printf('\Delta %s'), quantity_name);
-                cb_max_lims = [-Inf Inf];
+                lon_grid = new_lon_grid;
+                lat_grid = new_lat_grid;
             end
             
-            clims = calc_plot_limits(val_diff, 5, 'diff', 'pow10', 'max', cb_max_lims);
+            if strcmpi(diff_type, 'rel')
+                val_diff = reldiff(new_val, old_val)*100;
+                save_name = sprintf('Relative difference %s', title_str);
+                cb_label = sprintf(tex_in_printf('%%\Delta %s (%s)'), quantity_name, unit_name);
+                clims = calc_plot_limits(val_diff, 5, 'diff', 'pow10', 'max', [-100 100]);
+                cmap = blue_red_cmap;
+            elseif strcmpi(diff_type, 'abs')
+                val_diff = new_val - old_val;
+                save_name = sprintf('Absolute difference %s', title_str);
+                cb_label = sprintf(tex_in_printf('\Delta %s'), quantity_name);
+                clims = calc_plot_limits(val_diff, 5, 'diff', 'pow10', 'max', [-Inf Inf]);
+                cmap = blue_red_cmap;
+            elseif strcmpi(diff_type, 'none')
+                val_diff = new_val - old_val;
+                save_name = title_str;
+                cb_label = quantity_name;
+                clims = calc_plot_limits(val_diff, 5, 'zero', 'pow10', 'max', [-Inf Inf]);
+                cmap = parula;
+            end
             
             fig=figure; pcolor(lon_grid, lat_grid, val_diff);
             shading flat; 
             cb=colorbar; 
             caxis(clims); 
-            colormap(blue_red_cmap);
+            colormap(cmap);
             state_outlines('k', 'not', 'ak', 'hi');
             title(title_str);
             
@@ -713,15 +871,17 @@ classdef misc_behr_update_plots
             cb.Label.String = cb_label;
             cb.FontSize = 14;
             
-            if exist(misc_behr_update_plots.figs_root_dir, 'dir') && ~exist(save_dir, 'dir')
-                mkdir(save_dir)
-            elseif ~exist(misc_behr_update_plots.figs_root_dir, 'dir')
-                E.dir_dne('The misc_behr_update_plots figures root directory "%s" does not exist', misc_behr_update_plots.figs_root_dir);
+            if ~isempty(save_dir)
+                if exist(misc_behr_update_plots.figs_root_dir, 'dir') && ~exist(save_dir, 'dir')
+                    mkdir(save_dir)
+                elseif ~exist(misc_behr_update_plots.figs_root_dir, 'dir')
+                    E.dir_dne('The misc_behr_update_plots figures root directory "%s" does not exist', misc_behr_update_plots.figs_root_dir);
+                end
+                
+                savefig(fig, fullfile(save_dir, save_name));
+                saveas(fig, fullfile(save_dir, save_name), 'png');
+                close(fig);
             end
-            
-            savefig(fig, fullfile(save_dir, save_name));
-            saveas(fig, fullfile(save_dir, save_name), 'png');
-            close(fig);
         end
     end
     
