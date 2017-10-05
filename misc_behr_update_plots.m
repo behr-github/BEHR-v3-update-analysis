@@ -21,6 +21,7 @@ classdef misc_behr_update_plots
         wrf_path_v2 = '/Volumes/share-sat/SAT/BEHR/Monthly_NO2_Profiles';
         
         figs_root_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Figures';
+        modis_truecol_dir = '/Volumes/share-sat/SAT/MODIS/MYD09/Winter2012/';
     end
     
     methods(Static = true)
@@ -40,7 +41,7 @@ classdef misc_behr_update_plots
             G.checkState();
             
             save_dir = misc_behr_update_plots.behr_lon_def_dir;
-            misc_behr_update_plots.make_behr_with_parameters('4cbe433', '89e795c', save_dir, do_overwrite, true);
+            misc_behr_update_plots.make_behr_with_parameters('4cbe433', 'c410772', save_dir, do_overwrite, true);
         end
         
         function make_behr_londef(do_overwrite)
@@ -234,7 +235,8 @@ classdef misc_behr_update_plots
                 struct('dir', misc_behr_update_plots.behr_modis_quality_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
                 struct('dir', misc_behr_update_plots.behr_modis_quality_best_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
                 struct('dir', misc_behr_update_plots.behr_modis_ocean_mask_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo','BEHRAMFTrop'}}),...
-                struct('dir', misc_behr_update_plots.behr_lon_def_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRAMFTrop'}})...
+                struct('dir', misc_behr_update_plots.behr_lon_def_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRAMFTrop','MODISAlbedo'}}),...
+                struct('dir', misc_behr_update_plots.behr_offset_fix_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRAMFTrop','MODISAlbedo'}})...
             );
         
             G_new_avg = GitChecker;
@@ -537,14 +539,16 @@ classdef misc_behr_update_plots
             latlim = [25 50];
             
             dvec = datenum(start_date):datenum(end_date);
-            [band3_lons, band3_lats] = modis_cmg_latlon(0.05, [-180, 180], [-90, 90], true);
+            [band3_lons, band3_lats] = modis_cmg_latlon(0.05, [-180, 180], [-90, 90], 'grid');
             yy = band3_lats(:,1) >= min(latlim) & band3_lats(:,1) <= max(latlim);
             xx = band3_lons(1,:) >= min(lonlim) & band3_lons(1,:) <= max(lonlim);
             
             band3_lons = band3_lons(yy,xx);
             band3_lats = band3_lats(yy,xx);
-            avg_quality = zeros(size(band3_lons));
-            count = zeros(size(band3_lons));
+            Mzero = zeros(size(band3_lons));
+            modis_quantities = struct('BRDF_Quality', Mzero, 'Percent_Inputs', Mzero, 'Percent_Snow', Mzero, 'BRDF_Albedo_Uncertainty', Mzero);
+            modis_counts = make_empty_struct_from_cell(fieldnames(modis_quantities), Mzero);
+            fns = fieldnames(modis_quantities);
             for a=1:numel(dvec)
                 fprintf('Loading file from %s\n', datestr(dvec(a)));
                 % Figure out the MODIS file
@@ -557,25 +561,46 @@ classdef misc_behr_update_plots
                     E.filenotfound(modis_file_pat);
                 else
                     mcd43_info = hdfinfo(fullfile(behr_paths.mcd43c1_dir, year_str, F(1).name));
-                    wstate = warning('off','all'); % suppress warnings about missing scale factors, it's ok
-                    brdf_quality = hdfreadmodis(mcd43_info.Filename, hdfdsetname(mcd43_info,1,1,'BRDF_Quality'));
-                    warning(wstate);
-                    brdf_quality = brdf_quality(yy,xx);
                 end
-                nans = isnan(brdf_quality);
-                brdf_quality(nans) = 0;
-                avg_quality = avg_quality + brdf_quality;
-                count = count + double(~nans);
+                for b=1:numel(fns)
+                    wstate = warning('off','all'); % suppress warnings about missing scale factors, it's ok
+                    val = hdfreadmodis(mcd43_info.Filename, hdfdsetname(mcd43_info,1,1,fns{b}));
+                    warning(wstate);
+                    val = val(yy,xx);
+                    nans = isnan(val);
+                    val(nans) = 0;
+                    modis_quantities.(fns{b}) = modis_quantities.(fns{b}) + val;
+                    modis_counts.(fns{b}) = modis_counts.(fns{b}) + double(~nans);
+                end
             end
-            avg_quality = avg_quality ./ count;
             
-            figure;
-            pcolor(band3_lons, band3_lats, avg_quality);
-            shading flat;
-            colorbar;
-            colormap(jet);
-            state_outlines('k','not','ak','hi');
-            title(sprintf('Avg. MCD43C1 quality from %s to %s', start_date, end_date));
+            for b=1:numel(fns)
+                modis_quantities.(fns{b}) = modis_quantities.(fns{b}) ./ modis_counts.(fns{b});
+                
+                figure;
+                pcolor(band3_lons, band3_lats, modis_quantities.(fns{b}));
+                shading flat;
+                colorbar;
+                colormap(jet);
+                state_outlines('k','not','ak','hi');
+                title(sprintf('Avg. %s from %s to %s', fns{b}, start_date, end_date));
+            end
+        end
+        
+        function modis_picture(date_in)
+            if ~exist('date_in', 'var')
+                date_in = ask_date('Enter the date to plot the truecolor image for');
+            end
+            
+            modis_pattern = sprintf('MYD09CMG.A%04d%03d*.hdf', year(date_in), modis_date_to_day(date_in));
+            F = dirff(fullfile(misc_behr_update_plots.modis_truecol_dir, modis_pattern));
+            if numel(F) ~= 1
+                fprintf('Cannot find file for %s\n', datestr(date_in));
+                return
+            end
+            
+            modis_cmg_truecolor_image(F(1).name, [-125 -65], [25 50]);
+            title(datestr(date_in));
         end
     end
     
