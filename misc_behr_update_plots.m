@@ -5,13 +5,9 @@ classdef misc_behr_update_plots
     properties(Constant = true)
         start_date = '2012-01-01';
         end_date = '2012-12-31';
-        behr_offset_fix_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/8-OffsetFix';
-        behr_lon_def_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/7-TemperatureLonDef';
-        behr_modis_ocean_mask_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/6c-MODISOceanMask';
-        behr_modis_quality_best_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/6b-MODISQualityBest';
-        behr_modis_quality_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/6-MODISQuality';
-        behr_final_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/5-PSM';
-        behr_final_cvm_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/5b-CVM';
+        behr_final_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/6-Final';
+        behr_nasa_brdf_vis_profs_wrftemp_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/5b-WRFTemp';
+        behr_nasa_brdf_vis_profs_tempfix_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/5a-TempFix';
         behr_nasa_brdf_vis_profs_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/4-NewProfs';
         behr_nasa_brdf_vis_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/3-NewVis';
         behr_nasa_brdf_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/2-BRDF';
@@ -25,10 +21,14 @@ classdef misc_behr_update_plots
     end
     
     methods(Static = true)
-        function make_behr_modis_quality_offset_fix(do_overwrite)
-            % Produces the final version, but with the fix to HDFREADMODIS
-            % so that the quality is actually restricted to 2 or better
-            % (not 3 or better)
+        function make_behr_final(do_overwrite)
+            % Produces the final version, with:
+            %   * NASA v3 data
+            %   * BRDF surf
+            %   * New visible AMFs
+            %   * New NO2 profiles
+            %   * WRF temperature profiles
+            %   * CVM gridding
             if ~exist('do_overwrite', 'var')
                 do_overwrite = false;
             end
@@ -40,118 +40,30 @@ classdef misc_behr_update_plots
             G.Strict = true;
             G.checkState();
             
-            save_dir = misc_behr_update_plots.behr_lon_def_dir;
-            misc_behr_update_plots.make_behr_with_parameters('4cbe433', 'c410772', save_dir, do_overwrite, true);
+            save_dir = misc_behr_update_plots.behr_final_dir;
+            misc_behr_update_plots.make_behr_with_parameters('2ad4323', '596e300', save_dir, do_overwrite, true);
         end
         
-        function make_behr_londef(do_overwrite)
+        function make_behr_wrf_temp(do_overwrite)
             % Produces the final version, but with the longitude definition
             % in the temperature profiles fixed.
             if ~exist('do_overwrite', 'var')
                 do_overwrite = false;
             end
             
-            % Verify that the most up-to-date PSM code is active.
-            G = GitChecker;
-            G.addReqCommits(behr_paths.psm_dir, '7bd02b9');
-            G.addReqCommits(behr_paths.python_interface, 'a217fcd');
-            G.Strict = true;
-            G.checkState();
-            
-            save_dir = misc_behr_update_plots.behr_lon_def_dir;
-            misc_behr_update_plots.make_behr_with_parameters('4cbe433', 'cca8970', save_dir, do_overwrite, true);
+            save_dir = misc_behr_update_plots.behr_nasa_brdf_vis_profs_wrftemp_dir;
+            misc_behr_update_plots.make_behr_with_parameters('2a34177', 'f023bd5', save_dir, do_overwrite, true);
         end
         
-        function make_behr_modis_ocean_mask(do_overwrite)
-            % Produces the final version, but with MODIS albedo quality
-            % restricted to 2 or better and using the ocean mask to
-            % determine where to use the look up table.
+        function make_behr_temp_fix(do_overwrite)
+            % Produces the final version, but with the longitude definition
+            % in the temperature profiles fixed.
             if ~exist('do_overwrite', 'var')
                 do_overwrite = false;
             end
             
-            % Verify that the most up-to-date PSM code is active.
-            G = GitChecker;
-            G.addReqCommits(behr_paths.psm_dir, '7bd02b9');
-            G.addReqCommits(behr_paths.python_interface, 'a217fcd');
-            G.Strict = true;
-            G.checkState();
-            
-            save_dir = misc_behr_update_plots.behr_modis_ocean_mask_dir;
-            misc_behr_update_plots.make_behr_with_parameters('4cbe433', '4398fe7', save_dir, do_overwrite, true);
-        end
-        
-        function make_behr_modis_quality_best(do_overwrite)
-            % Produces the final version, but with MODIS albedo quality
-            % restricted to 0 = best.
-            if ~exist('do_overwrite', 'var')
-                do_overwrite = false;
-            end
-            
-            % Verify that the most up-to-date PSM code is active.
-            G = GitChecker;
-            G.addReqCommits(behr_paths.psm_dir, '7bd02b9');
-            G.addReqCommits(behr_paths.python_interface, 'a217fcd');
-            G.Strict = true;
-            G.checkState();
-            
-            save_dir = misc_behr_update_plots.behr_modis_quality_best_dir;
-            misc_behr_update_plots.make_behr_with_parameters('bbdc057', 'afd69ac', save_dir, do_overwrite, true);
-        end
-        
-        function make_behr_modis_quality(do_overwrite)
-            % Produces the final version, but with MODIS albedo quality
-            % restricted to 2 or better.
-            if ~exist('do_overwrite', 'var')
-                do_overwrite = false;
-            end
-            
-            % Verify that the most up-to-date PSM code is active.
-            G = GitChecker;
-            G.addReqCommits(behr_paths.psm_dir, '7bd02b9');
-            G.addReqCommits(behr_paths.python_interface, 'a217fcd');
-            G.Strict = true;
-            G.checkState();
-            
-            save_dir = misc_behr_update_plots.behr_modis_quality_dir;
-            misc_behr_update_plots.make_behr_with_parameters('c8689f9a', 'afd69ac', save_dir, do_overwrite, true);
-        end
-        
-        function make_behr_final(do_overwrite)
-            % Produces the final version, that includes:
-            %   1) NASA SP v3 base
-            %   2) BRDF land albedo
-            %   3) COARTS sea albedo
-            %   4) The new visible-only AMF
-            %   5) PSM gridding
-            %   6) New profiles (monthly and daily)
-            if ~exist('do_overwrite', 'var')
-                do_overwrite = false;
-            end
-            
-            % Verify that the most up-to-date PSM code is active.
-            G = GitChecker;
-            G.addReqCommits(behr_paths.psm_dir, 'a861905');
-            G.addReqCommits(fullfile(behr_repo_dir, '..', 'Python Interface'), 'a217fcd');
-            G.Strict = true;
-            G.checkState();
-            
-            save_dir = misc_behr_update_plots.behr_final_dir;
-            misc_behr_update_plots.make_behr_with_parameters('ddb101b', save_dir, do_overwrite, true);
-        end
-        
-        function make_behr_final_only_cvm(do_overwrite)
-            G = GitChecker;
-            G.addReqCommits(behr_paths.psm_dir, '49f77fc');
-            G.checkState();
-            
-            if ~exist('do_overwrite', 'var')
-                do_overwrite = false;
-            end
-            
-            sp_dir = fullfile(misc_behr_update_plots.behr_final_dir, 'SP_Files');
-            save_dir = misc_behr_update_plots.behr_final_cvm_dir;
-            misc_behr_update_plots.make_behr_with_parameters('d71805e', save_dir, do_overwrite, true, sp_dir);
+            save_dir = misc_behr_update_plots.behr_nasa_brdf_vis_profs_tempfix_dir;
+            misc_behr_update_plots.make_behr_with_parameters('91db419', '1202eb3', save_dir, do_overwrite, true);
         end
         
         function make_behr_brdf_nasa_newvis_profs(do_overwrite)
@@ -161,13 +73,13 @@ classdef misc_behr_update_plots
             %   3) the COARTS sea albedo
             %   4) the new visible-only AMF
             %   5) the new profiles
-            % but not the PSM gridding.
+            % but not the new CVM gridding.
             if ~exist('do_overwrite', 'var')
                 do_overwrite = false;
             end
             
             save_dir = misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir;
-            misc_behr_update_plots.make_behr_with_parameters('11177fd', save_dir, do_overwrite, true);
+            misc_behr_update_plots.make_behr_with_parameters('91db419', '0fbed9e', save_dir, do_overwrite, true);
         end
         
         function make_behr_brdf_nasa_newvis(do_overwrite)
@@ -182,7 +94,7 @@ classdef misc_behr_update_plots
             end
             
             save_dir = misc_behr_update_plots.behr_nasa_brdf_vis_dir;
-            misc_behr_update_plots.make_behr_with_parameters('d64a80f1', save_dir, do_overwrite, false);
+            misc_behr_update_plots.make_behr_with_parameters('d6e0b89', '5089156', save_dir, do_overwrite, false);
         end
         
         function make_behr_brdf_and_nasa(do_overwrite)
@@ -197,7 +109,7 @@ classdef misc_behr_update_plots
             end
             
             save_dir = misc_behr_update_plots.behr_nasa_brdf_dir;
-            misc_behr_update_plots.make_behr_with_parameters('2018ae4', save_dir, do_overwrite, false);
+            misc_behr_update_plots.make_behr_with_parameters('1d90745', '459964f', save_dir, do_overwrite, false);
         end
         
         function make_behr_only_new_nasa(do_overwrite)
@@ -209,7 +121,7 @@ classdef misc_behr_update_plots
             end
             
             save_dir = misc_behr_update_plots.behr_nasa_only_dir;
-            misc_behr_update_plots.make_behr_with_parameters('d889411', save_dir, do_overwrite, false);
+            misc_behr_update_plots.make_behr_with_parameters('cfbad01', '8236170', save_dir, do_overwrite, false);
         end
         
         
