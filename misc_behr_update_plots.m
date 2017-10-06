@@ -602,6 +602,67 @@ classdef misc_behr_update_plots
             modis_cmg_truecolor_image(F(1).name, [-125 -65], [25 50]);
             title(datestr(date_in));
         end
+        
+        function check_wrf_temp_profs(date_in, daily_or_monthly)
+            % Plots temperature matched by rProfile_WRF to native pixels
+            % with state outline so that I can inspect the temperature
+            % profiles and make sure they match the geography correctly.
+            E = JLLErrors;
+            
+            % Must have the commit that adds temperature profiles matching
+            % to rProfile_WRF
+            G = GitChecker;
+            G.addReqCommits(behr_paths.behr_utils, '2a79b98');
+            G.checkState();
+            
+            if ~exist('date_in', 'var')
+                date_in = ask_date('Which date to use for the temperature profiles?');
+            else
+                date_in = validate_date(date_in);
+            end
+            
+            dm_list = {'daily', 'monthly'};
+            if ~exist('daily_or_monthly', 'var')
+                daily_or_monthly = ask_multichoice('Use daily or monthly temperature profiles?', dm_list, 'list', true);
+            elseif ~ismember(daily_or_monthly, dm_list)
+                E.badinput('DAILY_OR_MONTHLY must be one of %s', strjoin(dm_list, ', '));
+            end
+            
+            % We'll use the native data from the "final" directory
+            behr_pattern = sprintf('OMI_SP_*_%s.mat', datestr(date_in, 'yyyymmdd'));
+            F = dirff(fullfile(misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir, 'SP_Files', behr_pattern));
+            if numel(F) ~= 1
+                E.filenotfound(behr_pattern);
+            end
+            
+            [slon, slat] = state_outlines('not', 'ak', 'hi');
+            
+            D = load(F(1).name);
+            Data = D.Data;
+            for a=1:numel(D.Data)
+                lon = Data(a).Longitude;
+                lat = Data(a).Latitude;
+                loncorns = Data(a).FoV75CornerLongitude;
+                latcorns = Data(a).FoV75CornerLatitude;
+                time = Data(a).Time;
+                surfPres = Data(a).GLOBETerpres;
+                surfPres(surfPres>=1013)=1013;
+                pressure = behr_pres_levels();
+                [~, temperature] = rProfile_WRF(date_in, daily_or_monthly, loncorns, latcorns, time, surfPres, pressure);
+                
+                tstr = sprintf('%s - Swath %d', datestr(date_in), a);
+                
+                plot_slice_gui(permute(temperature, [2 3 1]), lon, lat, slon, slat, tstr);
+                
+                % Also plot surface pressure to help check where things are
+                % NaNs
+                figure; pcolor(lon, lat, surfPres);
+                shading flat;
+                colorbar;
+                state_outlines('k','not','ak','hi');
+                title(tstr);
+            end
+        end
     end
     
     methods(Static = true, Access = private)
