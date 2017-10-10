@@ -10,6 +10,7 @@ classdef misc_behr_update_plots
         behr_nasa_brdf_vis_profs_tempfix_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/5a-TempFix';
         behr_nasa_brdf_vis_profs_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/4-NewProfs';
         behr_nasa_brdf_vis_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/3-NewVis';
+        behr_nasa_brdfD_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/2-BRDF-D';
         behr_nasa_brdf_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/2-BRDF';
         behr_nasa_only_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/1-NASAv3';
         behr_v2_1C_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/0-v2.1C';
@@ -41,7 +42,7 @@ classdef misc_behr_update_plots
             G.checkState();
             
             save_dir = misc_behr_update_plots.behr_final_dir;
-            misc_behr_update_plots.make_behr_with_parameters('2ad4323', '596e300', save_dir, do_overwrite, true);
+            misc_behr_update_plots.make_behr_with_parameters('6ddf77d', '298e5d9', save_dir, do_overwrite, true);
         end
         
         function make_behr_wrf_temp(do_overwrite)
@@ -52,7 +53,7 @@ classdef misc_behr_update_plots
             end
             
             save_dir = misc_behr_update_plots.behr_nasa_brdf_vis_profs_wrftemp_dir;
-            misc_behr_update_plots.make_behr_with_parameters('2a34177', 'f023bd5', save_dir, do_overwrite, true);
+            misc_behr_update_plots.make_behr_with_parameters('453c2d8', '88be28c', save_dir, do_overwrite, true);
         end
         
         function make_behr_temp_fix(do_overwrite)
@@ -63,7 +64,7 @@ classdef misc_behr_update_plots
             end
             
             save_dir = misc_behr_update_plots.behr_nasa_brdf_vis_profs_tempfix_dir;
-            misc_behr_update_plots.make_behr_with_parameters('91db419', '1202eb3', save_dir, do_overwrite, true);
+            misc_behr_update_plots.make_behr_with_parameters('1268384', '2ebbb06', save_dir, do_overwrite, true);
         end
         
         function make_behr_brdf_nasa_newvis_profs(do_overwrite)
@@ -79,7 +80,7 @@ classdef misc_behr_update_plots
             end
             
             save_dir = misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir;
-            misc_behr_update_plots.make_behr_with_parameters('91db419', '0fbed9e', save_dir, do_overwrite, true);
+            misc_behr_update_plots.make_behr_with_parameters('e8c95e8', '9ec690e', save_dir, do_overwrite, true);
         end
         
         function make_behr_brdf_nasa_newvis(do_overwrite)
@@ -94,7 +95,22 @@ classdef misc_behr_update_plots
             end
             
             save_dir = misc_behr_update_plots.behr_nasa_brdf_vis_dir;
-            misc_behr_update_plots.make_behr_with_parameters('d6e0b89', '5089156', save_dir, do_overwrite, false);
+            misc_behr_update_plots.make_behr_with_parameters('e40a3fd', '2ac981a', save_dir, do_overwrite, false);
+        end
+        
+        function make_behr_brdfD_and_nasa(do_overwrite)
+            % Produces the version of BEHR that has:
+            %   1) the NASA SP v3 base,
+            %   2) the BRDF albedo using MCD43D{07,08,09,31} (instead of MCD43C1)
+            %   3) the COARTS sea albedo
+            % but not the new visible-only AMF, new profiles or the PSM
+            % gridding.
+            if ~exist('do_overwrite', 'var')
+                do_overwrite = false;
+            end
+            
+            save_dir = misc_behr_update_plots.behr_nasa_brdfD_dir;
+            misc_behr_update_plots.make_behr_with_parameters('2298472', '2c692b5', save_dir, do_overwrite, false);
         end
         
         function make_behr_brdf_and_nasa(do_overwrite)
@@ -109,7 +125,7 @@ classdef misc_behr_update_plots
             end
             
             save_dir = misc_behr_update_plots.behr_nasa_brdf_dir;
-            misc_behr_update_plots.make_behr_with_parameters('1d90745', '459964f', save_dir, do_overwrite, false);
+            misc_behr_update_plots.make_behr_with_parameters('4362069', 'c592651', save_dir, do_overwrite, false);
         end
         
         function make_behr_only_new_nasa(do_overwrite)
