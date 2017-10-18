@@ -10,10 +10,12 @@ classdef misc_behr_update_plots
         behr_nasa_brdf_vis_profs_tempfix_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/5a-TempFix';
         behr_nasa_brdf_vis_profs_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/4-NewProfs';
         behr_nasa_brdf_vis_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/3-NewVis';
-        behr_nasa_brdfD_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/2-BRDF-D';
+        behr_nasa_brdfD_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/2b-BRDF-D';
         behr_nasa_brdf_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/2-BRDF';
         behr_nasa_only_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/1-NASAv3';
         behr_v2_1C_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/0-v2.1C';
+        
+        bc_test_root = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/BC-Tests';
         
         wrf_path_v2 = '/Volumes/share-sat/SAT/BEHR/Monthly_NO2_Profiles';
         
@@ -140,6 +142,78 @@ classdef misc_behr_update_plots
             misc_behr_update_plots.make_behr_with_parameters('cfbad01', '8236170', save_dir, do_overwrite, false);
         end
         
+        function make_bc_test_runs(do_overwrite)
+            if ~exist('do_overwrite','var')
+                do_overwrite = ask_yn('Overwrite existing files?');
+            end
+            
+            moz_bc_dir = '/Volumes/share-wrf1/Tests/GeosBC-Test/MozBCs';
+            geos_bc_dir = '/Volumes/share-wrf1/Tests/GeosBC-Test/GeosBCs';
+            
+            moz_save_dir = fullfile(misc_behr_update_plots.bc_test_root, 'MozBCs');
+            if ~exist(moz_save_dir, 'dir')
+                mkdir(moz_save_dir);
+            end
+            geos_save_dir = fullfile(misc_behr_update_plots.bc_test_root, 'GeosBCs');
+            if ~exist(geos_save_dir, 'dir')
+                mkdir(geos_save_dir);
+            end
+            
+            bc_start_date = '2012-04-02';
+            bc_end_date = '2012-04-08';
+            
+            % The SP files shouldn't change after the BRDF implementation
+            sp_dir = fullfile(misc_behr_update_plots.behr_nasa_brdfD_dir, 'SP_Files');
+            
+            BEHR_main('start', bc_start_date,...
+                'end', bc_end_date,...
+                'sp_mat_dir', sp_dir,...
+                'behr_mat_dir', moz_save_dir,...
+                'no2_profile_path', moz_bc_dir,...
+                'profile_mode', 'daily',...
+                'overwrite', do_overwrite);
+            
+            BEHR_main('start', bc_start_date,...
+                'end', bc_end_date,...
+                'sp_mat_dir', sp_dir,...
+                'behr_mat_dir', geos_save_dir,...
+                'no2_profile_path', geos_bc_dir,...
+                'profile_mode', 'daily',...
+                'overwrite', do_overwrite);
+        end
+        
+        function compare_bc_profiles
+        end
+        
+        function compare_bc_amfs()
+            % Assume that the files available are the same in both
+            % directories
+            files = dir(fullfile(misc_behr_update_plots.bc_test_root, 'MozBCs'));
+            test_file = ask_multichoice('Choose file to compare', {files.name}, 'list', true);
+            filter_clouds = ask_yn('Filter out cld. frac. > 0.2?');
+            moz = load(fullfile(misc_behr_update_plots.bc_test_root, 'MozBCs', test_file), 'Data');
+            geos = load(fullfile(misc_behr_update_plots.bc_test_root, 'GeosBCs', test_file), 'Data');
+            
+            file_date = datenum(regexp(test_file, '\d\d\d\d\d\d\d\d', 'match', 'once'), 'yyyymmdd');
+            file_date = datestr(file_date);
+            for a=1:numel(moz.Data)
+                lon = moz.Data(a).Longitude;
+                lat = moz.Data(a).Latitude;
+                rdel = reldiff(moz.Data(a).BEHRAMFTrop, geos.Data(a).BEHRAMFTrop)*100;
+                % Clouds should be the same in both, they are not affected
+                % by the NO2 profile
+                if filter_clouds
+                    high_clds = moz.Data(a).CloudFraction > 0.2;
+                    rdel(high_clds) = nan;
+                end
+                figure; 
+                pcolor(lon, lat, rdel);
+                shading flat;
+                colorbar;
+                state_outlines('k','not','ak','hi');
+                title(sprintf('%s - Orbit %d', file_date, a));
+            end
+        end
         
         function average_no2_vcds()
            
@@ -156,15 +230,12 @@ classdef misc_behr_update_plots
                 struct('dir', misc_behr_update_plots.behr_v2_1C_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
                 struct('dir', misc_behr_update_plots.behr_nasa_only_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
                 struct('dir', misc_behr_update_plots.behr_nasa_brdf_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'MODISAlbedo'}}),...
+                struct('dir', misc_behr_update_plots.behr_nasa_brdfD_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'MODISAlbedo'}}),...
                 struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly'}}),...
-                struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly'}}),...
-                struct('dir', misc_behr_update_plots.behr_final_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly'}}),...
-                struct('dir', misc_behr_update_plots.behr_final_cvm_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
-                struct('dir', misc_behr_update_plots.behr_modis_quality_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
-                struct('dir', misc_behr_update_plots.behr_modis_quality_best_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
-                struct('dir', misc_behr_update_plots.behr_modis_ocean_mask_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo','BEHRAMFTrop'}}),...
-                struct('dir', misc_behr_update_plots.behr_lon_def_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRAMFTrop','MODISAlbedo'}}),...
-                struct('dir', misc_behr_update_plots.behr_offset_fix_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRAMFTrop','MODISAlbedo'}})...
+                struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','BEHRAMFTrop','BEHRAMFTropVisOnly'}}),...
+                struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_profs_tempfix_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','BEHRAMFTrop','BEHRAMFTropVisOnly'}}),...
+                struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_profs_wrftemp_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','BEHRAMFTrop','BEHRAMFTropVisOnly'}}),...
+                struct('dir', misc_behr_update_plots.behr_final_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly'}})...
             );
         
             G_new_avg = GitChecker;
