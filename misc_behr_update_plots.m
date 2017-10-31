@@ -24,6 +24,19 @@ classdef misc_behr_update_plots
     end
     
     methods(Static = true)
+        
+        %%%%%%%%%%%%%%%%%%%%%%%%%
+        % Property like methods %
+        %%%%%%%%%%%%%%%%%%%%%%%%%
+        
+        function d = my_dir()
+            d = fileparts(mfilename('fullpath'));
+        end
+        
+        %%%%%%%%%%%%%%%%%%%%%%
+        % Generation methods %
+        %%%%%%%%%%%%%%%%%%%%%%
+        
         function make_behr_final(do_overwrite)
             % Produces the final version, with:
             %   * NASA v3 data
@@ -182,6 +195,10 @@ classdef misc_behr_update_plots
                 'overwrite', do_overwrite);
         end
         
+        %%%%%%%%%%%%%%%%%%%%
+        % Analysis methods %
+        %%%%%%%%%%%%%%%%%%%%
+        
         function compare_bc_profiles
         end
         
@@ -216,7 +233,7 @@ classdef misc_behr_update_plots
         end
         
         function average_no2_vcds()
-           
+            
             do_overwrite = ask_yn('Overwrite existing average files?');
  
             % Structure array that describes how each incremental change
@@ -229,36 +246,22 @@ classdef misc_behr_update_plots
             average_info = cat(1,...
                 struct('dir', misc_behr_update_plots.behr_v2_1C_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
                 struct('dir', misc_behr_update_plots.behr_nasa_only_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
-                struct('dir', misc_behr_update_plots.behr_nasa_brdf_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'MODISAlbedo'}}),...
                 struct('dir', misc_behr_update_plots.behr_nasa_brdfD_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'MODISAlbedo'}}),...
                 struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly'}}),...
                 struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','BEHRAMFTrop','BEHRAMFTropVisOnly'}}),...
                 struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_profs_tempfix_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','BEHRAMFTrop','BEHRAMFTropVisOnly'}}),...
                 struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_profs_wrftemp_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','BEHRAMFTrop','BEHRAMFTropVisOnly'}}),...
-                struct('dir', misc_behr_update_plots.behr_final_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly'}})...
+                struct('dir', misc_behr_update_plots.behr_final_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'BEHRAMFTrop', 'BEHRAMFTropVisOnly'}})...
             );
-        
-            G_new_avg = GitChecker;
-            G_new_avg.Strict = false;
-            G_old_avg = GitChecker;
-            G_old_avg.Strict = false;
             
-            G_new_avg.addReqCommits(behr_analysis_repo_dir,'fffce59');
-            G_old_avg.addCommitRange(behr_analysis_repo_dir,'f4dd1e4','f4dd1e4');
-            
-            do_new_avg = G_new_avg.checkState();
-            do_old_avg = G_old_avg.checkState();
-            
-            if ~do_new_avg && ~do_old_avg
-                E.callError('git_status', 'Not in the proper commit range to do either the old or new averaging');
-            end
-            
+            % Removed: struct('dir', misc_behr_update_plots.behr_nasa_brdfD_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'MODISAlbedo'}}),...
+            % since I skipped the MCD43C1 run this time.
             for a=1:numel(average_info)
                 for b=1:numel(average_info(a).data_fields)
-                    if do_new_avg && average_info(a).use_new_avg
-                        misc_behr_update_plots.average_behr_old(average_info(a).dir, average_info(a).data_fields{b}, do_overwrite, true);
-                    elseif do_old_avg
-                        misc_behr_update_plots.average_behr_old(average_info(a).dir, average_info(a).data_fields{b}, do_overwrite, false);
+                    if average_info(a).use_new_avg
+                        misc_behr_update_plots.average_behr(average_info(a).dir, average_info(a).data_fields{b}, do_overwrite, true);
+                    else
+                        misc_behr_update_plots.average_behr(average_info(a).dir, average_info(a).data_fields{b}, do_overwrite, false);
                     end
                 end
             end
@@ -761,7 +764,7 @@ classdef misc_behr_update_plots
         % Helper functions for the incremental change averages %
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         
-        function average_behr_old(data_dir, data_field, overwrite, use_new_avg)
+        function average_behr(data_dir, data_field, overwrite, use_new_avg)
             djf_start = {'2012-01-01', '2012-12-01'};
             djf_end = {'2012-02-29', '2012-12-31'};
             jja_start = '2012-06-01';
@@ -778,11 +781,19 @@ classdef misc_behr_update_plots
                 fprintf('%s exists\n', save_name);
             else
                 if use_new_avg
+                    % The new files may have different name patterns than
+                    % the old ones (e.g. final has the pattern
+                    % OMI_BEHR-PROFS_REGION_v3-0A_yyyymmdd)
                     [no2_vcds, lon_grid, lat_grid] = behr_time_average(djf_start, djf_end, lon_lim, lat_lim,...
-                        'avgfield', data_field, 'behr_dir', monthly_dir);
+                        'avgfield', data_field, 'behr_dir', monthly_dir, 'filepattern', 'OMI_BEHR_*.mat');
                     count_grid = [];
                     avg_config = [];
                 else
+                    % Since I've moved no2_column_map_2014 into the private
+                    % subdirectory of the analysis repo, this class can
+                    % access it, but the rest of the Matlab functions
+                    % cannot. I also put the dependencies that changed in
+                    % there two, suitably renamed.
                     [~, no2_vcds, lon_grid, lat_grid, count_grid, avg_config] = no2_column_map_2014(djf_start, djf_end, lon_lim, lat_lim,...
                         'mapfield', data_field, 'behrdir', monthly_dir, 'fileprefix', 'OMI_BEHR_v2-1C_',...
                         'makefig', false);
@@ -797,7 +808,7 @@ classdef misc_behr_update_plots
             else
                 if use_new_avg
                     [no2_vcds, lon_grid, lat_grid] = behr_time_average(jja_start, jja_end, lon_lim, lat_lim,...
-                        'avgfield', data_field, 'behr_dir', monthly_dir);
+                        'avgfield', data_field, 'behr_dir', monthly_dir, 'filepattern', 'OMI_BEHR_*.mat');
                     count_grid = [];
                     avg_config = [];
                 else
@@ -819,7 +830,7 @@ classdef misc_behr_update_plots
                 else
                     if use_new_avg
                         [no2_vcds, lon_grid, lat_grid] = behr_time_average(djf_start, djf_end, lon_lim, lat_lim,...
-                            'avgfield', data_field, 'behr_dir', daily_dir);
+                            'avgfield', data_field, 'behr_dir', daily_dir, 'filepattern', 'OMI_BEHR_*.mat');
                         count_grid = [];
                         avg_config = [];
                     else
@@ -838,7 +849,7 @@ classdef misc_behr_update_plots
                 else
                     if use_new_avg
                         [no2_vcds, lon_grid, lat_grid] = behr_time_average(jja_start, jja_end, lon_lim, lat_lim,...
-                            'avgfield', data_field, 'behr_dir', daily_dir);
+                            'avgfield', data_field, 'behr_dir', daily_dir, 'filepattern', 'OMI_BEHR_*.mat');
                         count_grid = [];
                         avg_config = [];
                     else
