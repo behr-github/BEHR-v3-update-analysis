@@ -785,7 +785,7 @@ classdef misc_behr_update_plots
                     % the old ones (e.g. final has the pattern
                     % OMI_BEHR-PROFS_REGION_v3-0A_yyyymmdd)
                     [no2_vcds, lon_grid, lat_grid] = behr_time_average(djf_start, djf_end, lon_lim, lat_lim,...
-                        'avgfield', data_field, 'behr_dir', monthly_dir, 'filepattern', 'OMI_BEHR_*.mat');
+                        'avgfield', data_field, 'behr_dir', monthly_dir, 'filepattern', 'OMI_BEHR*.mat');
                     count_grid = [];
                     avg_config = [];
                 else
@@ -808,7 +808,7 @@ classdef misc_behr_update_plots
             else
                 if use_new_avg
                     [no2_vcds, lon_grid, lat_grid] = behr_time_average(jja_start, jja_end, lon_lim, lat_lim,...
-                        'avgfield', data_field, 'behr_dir', monthly_dir, 'filepattern', 'OMI_BEHR_*.mat');
+                        'avgfield', data_field, 'behr_dir', monthly_dir, 'filepattern', 'OMI_BEHR*.mat');
                     count_grid = [];
                     avg_config = [];
                 else
@@ -830,7 +830,7 @@ classdef misc_behr_update_plots
                 else
                     if use_new_avg
                         [no2_vcds, lon_grid, lat_grid] = behr_time_average(djf_start, djf_end, lon_lim, lat_lim,...
-                            'avgfield', data_field, 'behr_dir', daily_dir, 'filepattern', 'OMI_BEHR_*.mat');
+                            'avgfield', data_field, 'behr_dir', daily_dir, 'filepattern', 'OMI_BEHR*.mat');
                         count_grid = [];
                         avg_config = [];
                     else
@@ -849,7 +849,7 @@ classdef misc_behr_update_plots
                 else
                     if use_new_avg
                         [no2_vcds, lon_grid, lat_grid] = behr_time_average(jja_start, jja_end, lon_lim, lat_lim,...
-                            'avgfield', data_field, 'behr_dir', daily_dir, 'filepattern', 'OMI_BEHR_*.mat');
+                            'avgfield', data_field, 'behr_dir', daily_dir, 'filepattern', 'OMI_BEHR*.mat');
                         count_grid = [];
                         avg_config = [];
                     else
