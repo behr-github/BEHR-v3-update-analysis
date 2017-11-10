@@ -1006,11 +1006,13 @@ classdef misc_behr_v3_validation
                     end
                 end
                 
+                wrf_int_mode = 'box';
+                
                 % Load a new monthly file, if needed
                 wrf_monthly_file_tmp = fullfile(find_wrf_path('us','monthly',dvec(d)), sprintf('WRF_BEHR_monthly_%02d.nc', month(dvec(d))));
                 if ~strcmp(monthly_file, wrf_monthly_file_tmp)
                     monthly_file = wrf_monthly_file_tmp;
-                    monthly_wrf_no2_vcds = compute_wrf_trop_columns(monthly_file, 200);
+                    monthly_wrf_no2_vcds = compute_wrf_trop_columns(monthly_file, wrf_int_mode, 200);
                     monthly_wrf_lon = ncread(monthly_file, 'XLONG');
                     monthly_wrf_lat = ncread(monthly_file, 'XLAT');
                 end
@@ -1021,7 +1023,7 @@ classdef misc_behr_v3_validation
                 [~, daily_wrf_file_tmp] = fileparts(Data(1).BEHRWRFFile);
                 wrf_date = date_from_wrf_filenames(daily_wrf_file_tmp);
                 daily_file = fullfile(find_wrf_path('us','daily',wrf_date), sprintf('wrfout_d01_%s', datestr(wrf_date, 'yyyy-mm-dd_HH-MM-SS')));
-                daily_wrf_no2_vcds = compute_wrf_trop_columns(daily_file, 200);
+                daily_wrf_no2_vcds = compute_wrf_trop_columns(daily_file, wrf_int_mode, 200);
                 daily_wrf_lon = ncread(daily_file, 'XLONG');
                 daily_wrf_lat = ncread(daily_file, 'XLAT');
                 
