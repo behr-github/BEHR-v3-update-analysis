@@ -466,6 +466,27 @@ classdef misc_behr_v3_validation
             locs = struct(struct_tmp_cell{:});
         end
         
+        function [xx, yy] = find_loc_indices(loc, lon, lat, radius)
+            % LOC must be a scalar element of the locations structure, LON
+            % and LAT must be 2D arrays of longitude and latitude
+            % coordinates for an NO2 average or similar 2D field. RADIUS
+            % must be a scalar number of grid cells in each direction to
+            % get. If omitted, defaults to 0.
+            E = JLLErrors;
+    
+            if ~exist('radius', 'var')
+                radius = 0;
+            end 
+    
+            r = sqrt((lon - loc.Longitude).^2 + (lat - loc.Latitude).^2);
+            [~, i_min] = min(r(:));
+            [xx, yy] = ind2sub(size(lon), i_min); 
+    
+            xx = (xx - radius):(xx + radius);
+            yy = (yy - radius):(yy + radius);
+        end 
+
+        
         %%%%%%%%%%%%%%%%%%%%%%
         % Plotting functions %
         %%%%%%%%%%%%%%%%%%%%%%
@@ -987,9 +1008,11 @@ classdef misc_behr_v3_validation
                 
                 % Load a new monthly file, if needed
                 wrf_monthly_file_tmp = fullfile(behr_paths.BEHRMatSubdir('us','monthly'), sprintf('WRF_BEHR_monthly_%02d.n', month(dvec(d))));
-                if ~strcmp(monthly_file)
+                if ~strcmp(monthly_file, wrf_monthly_file_tmp)
                     monthly_file = wrf_monthly_file_tmp;
                     monthly_wrf_no2_vcds = compute_wrf_trop_columns(monthly_file, 200);
+                    monthly_wrf_lon = ncread(monthly_file, 'XLONG');
+                    monthly_wrf_lat = ncread(monthly_file, 'XLAT');
                 end
                 
                 % Get the WRF file name, but just retrieve the date b/c
@@ -999,6 +1022,51 @@ classdef misc_behr_v3_validation
                 wrf_date = date_from_wrf_filenames(daily_wrf_file_tmp);
                 daily_file = fullfile(find_wrf_path('us','daily',wrf_date), sprintf('wrfout_d01_%s', datestr(wrf_date, 'yyyy-mm-dd_HH-MM-SS')));
                 daily_wrf_no2_vcds = compute_wrf_trop_columns(daily_file, 200);
+                daily_wrf_lon = ncread(daily_file, 'XLONG');
+                daily_wrf_lat = ncread(daily_file, 'XLAT');
+                
+                for a=1:numel(Data)
+                    % Loop over every swath. If the location is in the box
+                    % defined by the four corner pixel centers of the swath
+                    % plot it
+                    corner_x = [Data(a).Longitude(1,1), Data(a).Longitude(1,end), Data(a).Longitude(end,end), Data(a).Longitude(end,1)];
+                    corner_y = [Data(a).Latitude(1,1), Data(a).Latitude(1,end), Data(a).Latitude(end,end), Data(a).Latitude(end,1)];
+                    if ~inpolygon(plot_loc.Longitude, plot_loc.Latitude, corner_x, corner_y);
+                        continue
+                    end
+                    
+                    badpix = mod(Data(a).BEHRQualityFlags, 2) ~= 0;
+                    Data(a).BEHRColumnAmountNO2Trop(badpix) = NaN;
+                    
+                    plot_radius = 10; % number of grid cells or pixels around the location to plot
+                    [xx_sat, yy_sat] = misc_behr_v3_validation.find_loc_indices(plot_loc, Data(a).Longitude, Data(a).Latitude, plot_radius);
+                    [xx_monthly, yy_monthly] = misc_behr_v3_validation.find_loc_indices(plot_loc, monthly_wrf_lon, monthly_wrf_lat, plot_radius);
+                    [xx_daily, yy_daily] = misc_behr_v3_validation.find_loc_indices(plot_loc, daily_wrf_lon, daily_wrf_lat, plot_radius);
+                    
+                    % Make the plot, 3 side-by-side figures
+                    figure;
+                    for p=1:3
+                        subplot(1,3,p);
+                        if a==1
+                            % Convert VCD back to SCD
+                            pcolor(squeeze(Data(a).FoV75CornerLongitude(1,xx_sat,yy_sat)), squeeze(Data(a).FoV75CornerLatitude(1,xx_sat,yy_sat)), Data(a).BEHRColumnAmountNO2Trop(xx_sat,yy_sat) .* Data(a).BEHRAMFTrop(xx_sat, yy_sat));
+                            title('OMI Trop. SCD');
+                        elseif a==2
+                            pcolor(monthly_wrf_lon(xx_monthly, yy_monthly), monthly_wrf_lat(xx_monthly, yy_monthly), monthly_wrf_no2_vcds(xx_monthly, yy_monthly));
+                            title('Monthly WRF');
+                        elseif a==3
+                            pcolor(daily_wrf_lon(xx_monthly, yy_monthly), daily_wrf_lat(xx_monthly, yy_monthly), daily_wrf_no2_vcds(xx_daily, yy_daily));
+                            title('Daily WRF');
+                        else
+                            E.notimplemented('>3 plots')
+                        end
+                        
+                        caxis([0 1e16]);
+                        colorbar;
+                        line(plot_loc.Longitude, plot_loc.Latitude, 'linestyle', 'none', 'marker', 'p', 'color', 'w', 'markersize',16,'linewidth',2);
+                        set(gca,'fontsize',14);
+                    end
+                end
             end
         end
         
