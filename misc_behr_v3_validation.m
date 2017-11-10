@@ -1007,7 +1007,7 @@ classdef misc_behr_v3_validation
                 end
                 
                 % Load a new monthly file, if needed
-                wrf_monthly_file_tmp = fullfile(behr_paths.BEHRMatSubdir('us','monthly'), sprintf('WRF_BEHR_monthly_%02d.n', month(dvec(d))));
+                wrf_monthly_file_tmp = fullfile(find_wrf_path('us','monthly',dvec(d)), sprintf('WRF_BEHR_monthly_%02d.nc', month(dvec(d))));
                 if ~strcmp(monthly_file, wrf_monthly_file_tmp)
                     monthly_file = wrf_monthly_file_tmp;
                     monthly_wrf_no2_vcds = compute_wrf_trop_columns(monthly_file, 200);
@@ -1018,7 +1018,7 @@ classdef misc_behr_v3_validation
                 % Get the WRF file name, but just retrieve the date b/c
                 % files produced on the cluster will have different paths
                 % and use the subset files, which aren't stored locally.
-                [~, daily_wrf_file_tmp] = fileparts(Data(a).BEHRWRFFile);
+                [~, daily_wrf_file_tmp] = fileparts(Data(1).BEHRWRFFile);
                 wrf_date = date_from_wrf_filenames(daily_wrf_file_tmp);
                 daily_file = fullfile(find_wrf_path('us','daily',wrf_date), sprintf('wrfout_d01_%s', datestr(wrf_date, 'yyyy-mm-dd_HH-MM-SS')));
                 daily_wrf_no2_vcds = compute_wrf_trop_columns(daily_file, 200);
