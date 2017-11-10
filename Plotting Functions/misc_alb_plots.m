@@ -257,8 +257,8 @@ classdef misc_alb_plots
             end
             
             % Get the site output files
-            aerosol_subdir = sprintf('aerosols_%s', aerosol_type);
-            locs_info = ncinfo(fullfile(misc_alb_plots.scia_modis_dir, 'loc_coeffs.nc'));
+            aerosol_subdir = sprintf('aerosols_%s_mcd43d', aerosol_type);
+            locs_info = ncinfo(fullfile(misc_alb_plots.scia_modis_dir, 'loc_coeffs_D_new.nc'));
             loc_names = cellstr(ncread(locs_info.Filename, 'ShortName'));
             loc_coeffs = ncread(locs_info.Filename, 'ModisCoefficients');
             loc_months = double(ncread(locs_info.Filename, 'Months'));
