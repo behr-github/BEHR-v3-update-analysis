@@ -1132,6 +1132,7 @@ classdef misc_behr_v3_validation
                     % Whether or not we use this day, we don't want to
                     % repeat it, and we want to close the figures
                     close all
+                    this_date = site_dvec(idate);
                     site_dvec(idate) = [];
                     if user_ans == ned_ind
                         % If the user responded "Not enough data", then
@@ -1141,7 +1142,7 @@ classdef misc_behr_v3_validation
                     
                     iresult = sub2ind([ndays, nsites], b, a);
                     results(iresult).loc_name = locs(isite).ShortName;
-                    results(iresult).date = datestr(site_dvec(idate));
+                    results(iresult).date = datestr(this_date);
                     results(iresult).user_value = user_ans;
                     results(iresult).user_note = input('Enter a note if you wish: ', 's');
                     b = b + 1;
