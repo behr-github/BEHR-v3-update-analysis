@@ -40,6 +40,22 @@ classdef misc_behr_v3_validation
             value = fullfile(misc_behr_v3_validation.validation_root_dir, 'VCD-Comparison', 'gcas-vec-structs.mat');
         end
         
+        function value = scd_comp_dir()
+            value = fullfile(misc_behr_v3_validation.validation_root_dir, 'SCD-Wind-Comparisons');
+            if ~exist(value, 'dir')
+                mkdir(value)
+            end
+        end
+        
+        function value = scd_comp_file(is_partial)
+            if ~exist('is_partial', 'var') || ~is_partial
+                partial_str = '';
+            else
+                partial_str = '_partial';
+            end
+            value = fullfile(misc_behr_v3_validation.scd_comp_dir, sprintf('scd_daily_%s%s.mat', datestr(now, 'yyyy-mm-dd_HH-MM-SS'), partial_str));
+        end
+        
         function value = wrf_comp_file()
             value = fullfile(misc_behr_v3_validation.validation_root_dir, 'Profile-Comparison', 'wrf-match-structs.mat');
         end
@@ -338,8 +354,10 @@ classdef misc_behr_v3_validation
                 
                 % Match the WRF output to the entire P3 flight
                 for p=1:numel(profile_types)
-                    Match = match_wrf2campaigns.(campaigns{a})(profile_types{p}, all_merge_wrf_dirs.(profile_types{p}));
-                    profile_comp_struct.(profile_types{p}).(campaigns{a}).All.match = Match;
+                    if ~isempty(all_merge_wrf_dirs.(profile_types{p}))
+                        Match = match_wrf2campaigns.(campaigns{a})(profile_types{p}, all_merge_wrf_dirs.(profile_types{p}));
+                        profile_comp_struct.(profile_types{p}).(campaigns{a}).All.match = Match;
+                    end
                 end
             end
             
@@ -478,12 +496,16 @@ classdef misc_behr_v3_validation
                 radius = 0;
             end 
     
+            sz = size(lon);
+            
             r = sqrt((lon - loc.Longitude).^2 + (lat - loc.Latitude).^2);
             [~, i_min] = min(r(:));
             [xx, yy] = ind2sub(size(lon), i_min); 
     
             xx = (xx - radius):(xx + radius);
+            xx = xx(xx > 0 & xx <= sz(1));
             yy = (yy - radius):(yy + radius);
+            yy = yy(yy > 0 & yy <= sz(2));
         end 
 
         
@@ -1046,24 +1068,25 @@ classdef misc_behr_v3_validation
                     [xx_daily, yy_daily] = misc_behr_v3_validation.find_loc_indices(plot_loc, daily_wrf_lon, daily_wrf_lat, plot_radius);
                     
                     % Make the plot, 3 side-by-side figures
-                    figure;
+                    fig=figure;
+                    fig.Position(3) = fig.Position(3)*2;
                     for p=1:3
                         subplot(1,3,p);
-                        if a==1
+                        if p==1
                             % Convert VCD back to SCD
                             pcolor(squeeze(Data(a).FoV75CornerLongitude(1,xx_sat,yy_sat)), squeeze(Data(a).FoV75CornerLatitude(1,xx_sat,yy_sat)), Data(a).BEHRColumnAmountNO2Trop(xx_sat,yy_sat) .* Data(a).BEHRAMFTrop(xx_sat, yy_sat));
                             title('OMI Trop. SCD');
-                        elseif a==2
+                        elseif p==2
                             pcolor(monthly_wrf_lon(xx_monthly, yy_monthly), monthly_wrf_lat(xx_monthly, yy_monthly), monthly_wrf_no2_vcds(xx_monthly, yy_monthly));
                             title('Monthly WRF');
-                        elseif a==3
+                        elseif p==3
                             pcolor(daily_wrf_lon(xx_monthly, yy_monthly), daily_wrf_lat(xx_monthly, yy_monthly), daily_wrf_no2_vcds(xx_daily, yy_daily));
                             title('Daily WRF');
                         else
                             E.notimplemented('>3 plots')
                         end
                         
-                        caxis([0 1e16]);
+                        %caxis([0 1e16]);
                         colorbar;
                         line(plot_loc.Longitude, plot_loc.Latitude, 'linestyle', 'none', 'marker', 'p', 'color', 'w', 'markersize',16,'linewidth',2);
                         set(gca,'fontsize',14);
@@ -1072,6 +1095,65 @@ classdef misc_behr_v3_validation
             end
         end
         
+        
+        function results = record_scd_comparison()
+            nsites = 20;
+            ndays = 20;
+            dvec = datenum('2012-01-01'):datenum('2012-12-31');
+            locs = misc_behr_v3_validation.read_locs_file;
+            % Remove the rural sites
+            locs = locs(1:70);
+            
+            results = struct('loc_name', '', 'date', '', 'user_value', [], 'user_note', '');
+            results = repmat(results, nsites*ndays, 1);
+            
+            eval_opts = {'Daily - good agreement with SCD', 'Daily - bad agreement with SCD', 'Similar to monthly - good agreement with SCD', 'Similar to monthly - bad agreement with SCD', 'Not enough data'};
+            ned_ind = 5; % index for "Not enough data", if this is the response, we don't want to store the result.
+            for a=1:nsites
+                % Make a copy so that we can remove days as we test them
+                isite = randi(numel(locs), 1);
+                site_dvec = dvec;
+                b = 1;
+                while b <= ndays && ~isempty(site_dvec)
+                    idate = randi(numel(site_dvec), 1);
+                    misc_behr_v3_validation.plot_scd_vs_wrf_columns(locs(isite).ShortName, dvec(idate), dvec(idate));
+                    try
+                        user_ans = ask_multichoice('Evaluate this day', eval_opts, 'list', true, 'index', true);
+                    catch err
+                        if strcmp(err.identifier, 'ask_multichoice:user_cancel')
+                            % If we cancel the work, save the results
+                            % completed so far.
+                            save(misc_behr_v3_validation.scd_comp_file(true), 'results');
+                            return
+                        else
+                            rethrow(err)
+                        end
+                    end
+                    % Whether or not we use this day, we don't want to
+                    % repeat it, and we want to close the figures
+                    close all
+                    site_dvec(idate) = [];
+                    if user_ans == ned_ind
+                        % If the user responded "Not enough data", then
+                        % don't store any result.
+                        continue
+                    end
+                    
+                    iresult = sub2ind([ndays, nsites], b, a);
+                    results(iresult).loc_name = locs(isite).ShortName;
+                    results(iresult).date = datestr(site_dvec(idate));
+                    results(iresult).user_value = user_ans;
+                    results(iresult).user_note = input('Enter a note if you wish: ', 's');
+                    b = b + 1;
+                    fprintf('%d of %d completed...\n', iresult, nsites*ndays);
+                end
+                
+                locs(isite) = [];
+                
+            end
+            
+            save(misc_behr_v3_validation.scd_comp_file, 'results');
+        end
     end
     
 end
