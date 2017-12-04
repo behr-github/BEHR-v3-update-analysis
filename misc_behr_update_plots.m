@@ -665,6 +665,26 @@ classdef misc_behr_update_plots
                 title(tstr);
             end
         end
+        
+        function plot_sza_range_over_year()
+            dvec = datenum('2012-01-01'):datenum('2012-12-31');
+            min_szas = nan(size(dvec));
+            max_szas = nan(size(dvec));
+            for a=1:numel(dvec)
+                fprintf('%s\n', datestr(dvec(a)));
+                Data = load_behr_file(dvec(a), 'monthly', 'us');
+                szas = cat_sat_data(Data, 'SolarZenithAngle');
+                min_szas(a) = min(szas(:));
+                max_szas(a) = max(szas(:));
+            end
+            
+            l = gobjects(2,1);
+            figure; 
+            l(1) = line(dvec, min_szas, 'color', 'b', 'linewidth', 2);
+            l(2) = line(dvec, max_szas, 'color', 'r', 'linewidth', 2);
+            
+            legend(l, {'Minimum SZA','Maximum SZA'});
+        end
     end
     
     methods(Static = true, Access = private)
@@ -823,7 +843,8 @@ classdef misc_behr_update_plots
             
             % Only the new profiles and the version 3 final will have data
             % in the DailyProfs directory
-            if exist(fullfile(daily_dir, 'OMI_BEHR_v2-1C_20120101.mat'), 'file')
+            F = dir(fullfile(daily_dir, '*.mat'));
+            if ~isempty(F)
                 save_name = fullfile(data_dir, sprintf('%s-DJF-Daily.mat', data_field));
                 if ~overwrite && exist(save_name, 'file')
                     fprintf('%s exists\n', save_name);
@@ -834,8 +855,9 @@ classdef misc_behr_update_plots
                         count_grid = [];
                         avg_config = [];
                     else
+                        file_stem = regexp(F(1).name, 'OMI_BEHR.+(?=\d\d\d\d\d\d\d\d)', 'match', 'once');
                         [~, no2_vcds, lon_grid, lat_grid, count_grid, avg_config] = no2_column_map_2014(djf_start, djf_end, lon_lim, lat_lim,...
-                        'mapfield', data_field, 'behrdir', daily_dir, 'fileprefix', 'OMI_BEHR_v2-1C_',...
+                        'mapfield', data_field, 'behrdir', daily_dir, 'fileprefix', file_stem,...
                         'makefig', false);
                     end
                 
