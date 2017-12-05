@@ -223,7 +223,7 @@ classdef misc_behr_update_plots
                     high_clds = moz.Data(a).CloudFraction > 0.2;
                     rdel(high_clds) = nan;
                 end
-                figure; 
+                figure;
                 pcolor(lon, lat, rdel);
                 shading flat;
                 colorbar;
@@ -235,7 +235,7 @@ classdef misc_behr_update_plots
         function average_no2_vcds()
             
             do_overwrite = ask_yn('Overwrite existing average files?');
- 
+            
             % Structure array that describes how each incremental change
             % should be averaged. 3 fields: 'dir' is the root directory of
             % the outputs (which itself must contain the "MonthlyProfs" and
@@ -252,7 +252,7 @@ classdef misc_behr_update_plots
                 struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_profs_tempfix_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','BEHRAMFTrop','BEHRAMFTropVisOnly'}}),...
                 struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_profs_wrftemp_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','BEHRAMFTrop','BEHRAMFTropVisOnly'}}),...
                 struct('dir', misc_behr_update_plots.behr_final_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'BEHRAMFTrop', 'BEHRAMFTropVisOnly'}})...
-            );
+                );
             
             % Removed: struct('dir', misc_behr_update_plots.behr_nasa_brdfD_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'MODISAlbedo'}}),...
             % since I skipped the MCD43C1 run this time.
@@ -278,14 +278,14 @@ classdef misc_behr_update_plots
             
             % These must be in the order they are to be compared
             incr_dirs = {misc_behr_update_plots.behr_v2_1C_dir,...
-                         misc_behr_update_plots.behr_nasa_only_dir,...
-                         misc_behr_update_plots.behr_nasa_brdf_dir,...
-                         misc_behr_update_plots.behr_nasa_brdf_vis_dir,...
-                         misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir,...
-                         misc_behr_update_plots.behr_final_dir,...
-                         misc_behr_update_plots.behr_final_cvm_dir,...
-                         misc_behr_update_plots.behr_modis_quality_dir,...
-                         misc_behr_update_plots.behr_modis_quality_best_dir};
+                misc_behr_update_plots.behr_nasa_only_dir,...
+                misc_behr_update_plots.behr_nasa_brdf_dir,...
+                misc_behr_update_plots.behr_nasa_brdf_vis_dir,...
+                misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir,...
+                misc_behr_update_plots.behr_final_dir,...
+                misc_behr_update_plots.behr_final_cvm_dir,...
+                misc_behr_update_plots.behr_modis_quality_dir,...
+                misc_behr_update_plots.behr_modis_quality_best_dir};
             
             % Use the "outside.mat" file to clean up the plots. Must be the
             % same length as incr_dirs
@@ -297,9 +297,9 @@ classdef misc_behr_update_plots
             
             outside = load(fullfile(behr_analysis_repo_dir, 'Utils', 'outside.mat'));
             outside = ~logical(outside.outside);
-                     
+            
             for a=1:numel(incr_dirs)
-            %for a=numel(incr_dirs)
+                %for a=numel(incr_dirs)
                 if a < numel(incr_dirs)
                     base_ind = a;
                     new_ind = a+1;
@@ -342,7 +342,9 @@ classdef misc_behr_update_plots
         end
         
         
-        function plot_single_incr_diff()
+        function fig = plot_single_incr_diff(base_dir, new_dir, base_comparison_file, new_comparison_file, diff_type)
+            E = JLLErrors;
+            
             % Get all of the directories that would contain average files
             fns = fieldnames(misc_behr_update_plots);
             data_dirs = {};
@@ -353,47 +355,81 @@ classdef misc_behr_update_plots
                 end
             end
             
-            base_dir = ask_multichoice('Select the base directory for the difference', data_dirs, 'list', true);
+            % Check if base and new directories were given. If not, ask the
+            % user which ones to use
+            if ~exist('base_dir', 'var')
+                base_dir = ask_multichoice('Select the base directory for the difference', data_dirs, 'list', true);
+            elseif ~ismember(base_dir, data_dirs)
+                E.badinput('BASE_DIR is not one of the recognized data directories');
+            end
+            
             new_opts = veccat(data_dirs, {'No difference'});
-            new_dir = ask_multichoice('Select the new directory for the difference', new_opts, 'list', true);
+            if ~exist('new_dir', 'var')
+                new_dir = ask_multichoice('Select the new directory for the difference', new_opts, 'list', true);
+            elseif ~ismember(new_dir, new_opts)
+                E.badinput('BASE_DIR is not one of the recognized data directories');
+            end
             
             diff_bool = ~strcmpi(new_dir, 'No difference');
-                
+            
             
             % Now find all the data fields that the two directories have in
             % common
             Fbase = dir(fullfile(base_dir, '*.mat'));
             if diff_bool
                 Fnew = dir(fullfile(new_dir, '*.mat'));
-                xx_base = find_common_elements({Fbase.name}, {Fnew.name}, 'nodup');
-            else
-                xx_base = true(size(Fbase));
+                base_avg_files = misc_behr_update_plots.make_common_files_list({Fbase.name}, {Fnew.name});
             end
-            avg_files = {Fbase(xx_base).name};
             
-            comparison_file = ask_multichoice('Select the file to compare:', avg_files, 'list', true);
+            % Get user input of the file to compare (data field and season)
+            % as well as the difference type. If doing a difference, allow
+            % the user to compare daily and monthly files.
+            if ~exist('base_comparison_file', 'var')
+                base_comparison_file = ask_multichoice('Select the base file to compare against:', base_avg_files, 'list', true);
+            elseif ~ismember(base_comparison_file, base_avg_files)
+                E.badinput('BASE_COMPARISON_FILE is not one of the allowed files: %s', strjoin(base_avg_files, ', '));
+            end
+            
             if diff_bool
-                if ask_yn('Do a relative difference? (absolute if no)')
-                    diff_type = 'rel';
-                else
-                    diff_type = 'abs';
+                % Only allow the user to compare files for the same
+                % quantity and time period, but allow monthly/daily
+                % difference
+                new_avg_files = misc_behr_update_plots.make_common_files_list({Fnew.name}, {base_comparison_file});
+                
+                if ~exist('new_comparison_file', 'var')
+                    new_comparison_file = ask_multichoice('Select the new file to compare:', new_avg_files, 'list', true);
+                elseif ~ismember(new_comparison_file, new_avg_files)
+                    E.badinput('NEW_COMPARISON_FILE is not one of the allowed files: %s', strjoin(new_avg_files, ', '));
+                end
+                
+                allowed_diff_types = {'rel', 'abs'};
+                if ~exist('diff_type', 'var')
+                    if ask_yn('Do a relative difference? (absolute if no)')
+                        diff_type = 'rel';
+                    else
+                        diff_type = 'abs';
+                    end
+                elseif ~ismember(diff_type, allowed_diff_types)
+                    E.badinput('DIFF_TYPE must be one of: %s', strjoin(allowed_diff_types, ', '));
                 end
             else
                 diff_type = 'none';
             end
             
-            Dbase = load(fullfile(base_dir, comparison_file));
+            Dbase = load(fullfile(base_dir, base_comparison_file));
+            Dbase = misc_behr_update_plots.apply_outside(Dbase, base_dir);
             if diff_bool
-                Dnew = load(fullfile(new_dir, comparison_file));
-                [title_str, quantity_name, unit_name] = misc_behr_update_plots.get_title_from_file_name(comparison_file, base_dir, new_dir);
+                Dnew = load(fullfile(new_dir, new_comparison_file));
+                Dnew = misc_behr_update_plots.apply_outside(Dnew, new_dir);
+                [title_str, quantity_name, unit_name] = misc_behr_update_plots.get_title_from_file_name(base_comparison_file, base_dir, new_comparison_file, new_dir);
             else
                 Dnew = Dbase;
                 Dbase.no2_vcds = zeros(size(Dbase.no2_vcds));
-                [title_str, quantity_name, unit_name] = misc_behr_update_plots.get_title_from_file_name(comparison_file, base_dir);
+                [title_str, quantity_name, unit_name] = misc_behr_update_plots.get_title_from_file_name(base_comparison_file, base_dir);
             end
             
             
-            misc_behr_update_plots.plot_change_avg(Dbase.lon_grid, Dbase.lat_grid, Dbase.no2_vcds, Dnew.lon_grid, Dnew.lat_grid, Dnew.no2_vcds, diff_type, title_str, quantity_name, unit_name, '');
+            fig = misc_behr_update_plots.plot_change_avg(Dbase.lon_grid, Dbase.lat_grid, Dbase.no2_vcds, Dnew.lon_grid, Dnew.lat_grid, Dnew.no2_vcds, diff_type, title_str, quantity_name, unit_name, '');
         end
         
         
@@ -405,8 +441,8 @@ classdef misc_behr_update_plots
             % Only the increments with the new profiles have daily and
             % monthly profile retrievals
             incr_dirs = {misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir,...
-                         misc_behr_update_plots.behr_final_dir};
-                     
+                misc_behr_update_plots.behr_final_dir};
+            
             for a=1:numel(incr_dirs)
                 F = dir(fullfile(incr_dirs{a}, '*Daily.mat'));
                 for b=1:numel(F)
@@ -422,7 +458,7 @@ classdef misc_behr_update_plots
                     rel_del = reldiff(Ddaily.no2_vcds, Dmonthly.no2_vcds)*100;
                     
                     [~, quantity_name, unit_name, time_period] = misc_behr_update_plots.get_title_from_file_name(monthly_file, incr_dirs{a}, incr_dirs{a});
-                    title_str = sprintf('Daily vs monthly profiles (%s, %s)', quantity_name, time_period); 
+                    title_str = sprintf('Daily vs monthly profiles (%s, %s)', quantity_name, time_period);
                     save_dir = fullfile(misc_behr_update_plots.figs_root_dir, 'DailyVsMonthly');
                     
                     misc_behr_update_plots.plot_change_avg(Ddaily.lon_grid, Ddaily.lat_grid, abs_del, false, title_str, quantity_name, unit_name, save_dir);
@@ -679,11 +715,126 @@ classdef misc_behr_update_plots
             end
             
             l = gobjects(2,1);
-            figure; 
+            figure;
             l(1) = line(dvec, min_szas, 'color', 'b', 'linewidth', 2);
             l(2) = line(dvec, max_szas, 'color', 'r', 'linewidth', 2);
             
             legend(l, {'Minimum SZA','Maximum SZA'});
+        end
+        
+        function plot_no2_vs_cloudfrac()
+            fxn_start_date = ask_date('Give the starting date');
+            fxn_end_date = ask_date('Give the ending date');
+            as_shape_factor = ask_yn('Calculate shape factor?');
+            
+            omi_cloudfrac = [];
+            all_pres_levs = [];
+            behr_no2_daily = [];
+            behr_no2_monthly = [];
+            
+            dvec = datenum(fxn_start_date):datenum(fxn_end_date);
+            for d=1:numel(dvec)
+                D = load(fullfile(misc_behr_update_plots.behr_final_dir, 'DailyProfs', behr_filename(dvec(d), 'daily', 'us')),'Data');
+                DataDaily = D.Data;
+                
+                M = load(fullfile(misc_behr_update_plots.behr_final_dir, 'MonthlyProfs', behr_filename(dvec(d), 'monthly', 'us')), 'Data');
+                DataMonthly = M.Data;
+                
+                for a=1:numel(DataDaily)
+                    % We still need to reject row anomaly pixels because they
+                    % affect the OMI cloud fraction. Cloud fraction and row
+                    % anomaly should be the same between daily and monthly
+                    % files.
+                    xx = DataDaily(a).XTrackQualityFlags == 0;
+                    omi_cloudfrac = cat(1, omi_cloudfrac, DataDaily(a).CloudFraction(xx));
+                    
+                    % Get daily NO2
+                    no2_profs = DataDaily(a).BEHRNO2apriori(:,xx);
+                    pres_levs = DataDaily(a).BEHRPressureLevels(:,xx);
+                    if as_shape_factor
+                       vcds = integrate_published_behr_apriori(DataDaily(a));
+                       vcds = vcds(xx);
+                       for b=1:size(no2_profs,2)
+                           no2_profs(:,b) = no2_profs(:,b) ./ vcds(b) * 1e14; %scale by 1e14 just to make the numbers not so crazy small
+                       end
+                    end
+                    behr_no2_daily = cat(2, behr_no2_daily, no2_profs);
+                    all_pres_levs = cat(2, all_pres_levs, pres_levs);
+                    
+                    % Now monthly
+                    no2_profs_m = DataMonthly(a).BEHRNO2apriori(:,xx);
+                    if as_shape_factor
+                       vcds_m = integrate_published_behr_apriori(DataMonthly(a));
+                       vcds_m = vcds_m(xx);
+                       for b=1:size(no2_profs_m,2)
+                           no2_profs_m(:,b) = no2_profs_m(:,b) ./ vcds_m(b) * 1e14; %scale by 1e14 just to make the numbers not so crazy small
+                       end
+                    end
+                    behr_no2_monthly = cat(2, behr_no2_monthly, no2_profs_m);
+                end
+            end
+            
+            cc = omi_cloudfrac <= 0.2;
+            
+            % Average profiles with standard deviations
+            behr_no2_monthly_interp = nan(numel(behr_pres_levels()), size(behr_no2_monthly,2));
+            behr_no2_daily_interp = nan(numel(behr_pres_levels()), size(behr_no2_daily,2));
+            for a=1:size(behr_no2_monthly,2)
+                % The whole log-log space thing shouldn't be necessary
+                % because we're interpolating to pressure values that
+                % already exist, this just removes the extra pressure
+                % levels
+                behr_no2_monthly_interp(:,a) = naninterp1(all_pres_levs(:,a), behr_no2_monthly(:,a), behr_pres_levels());
+                behr_no2_daily_interp(:,a) = naninterp1(all_pres_levs(:,a), behr_no2_daily(:,a), behr_pres_levels());
+            end
+            
+            avg_no2_monthly = nanmean(behr_no2_monthly_interp(:,cc),2);
+            avg_no2_daily = nanmean(behr_no2_daily_interp(:,cc),2);
+            l=gobjects(2,1);
+            figure;
+            l(1)=line(avg_no2_monthly, behr_pres_levels(), 'color', 'b', 'linewidth', 2, 'marker', '^');
+            scatter_errorbars(avg_no2_monthly, behr_pres_levels(), nanstd(behr_no2_monthly_interp(:,cc),0,2), 'color', 'b','direction','x');
+            l(2)=line(avg_no2_daily, behr_pres_levels(), 'color', 'r', 'linewidth', 2, 'marker', 'o');
+            scatter_errorbars(avg_no2_daily, behr_pres_levels(), nanstd(behr_no2_daily_interp(:,cc),0,2), 'color', 'r','direction','x');
+            legend(l, {'Monthly profiles', 'Daily profiles'});
+            
+            % Scatter plots of concentration or shape factor vs. cloud
+            % fraction
+            
+            pp = all_pres_levs > 400;
+            behr_no2_monthly(pp) = nan;
+            ut_no2_monthly = squeeze(nanmean(behr_no2_monthly,1));
+            behr_no2_daily(pp) = nan;
+            ut_no2_daily = squeeze(nanmean(behr_no2_daily,1));
+            
+            figure;
+            scatter(omi_cloudfrac, ut_no2_monthly);
+            xlabel('OMI Cloud Fraction');
+            ylabel('Monthly a priori NO_2 \leq 400 hPa');
+            
+            figure; 
+            scatter(omi_cloudfrac, ut_no2_daily);
+            xlabel('OMI Cloud Fraction');
+            ylabel('Daily a priori NO_2 \leq 400 hPa');
+            
+            % Frequency distribution plots of concentration or shape factor
+            % for pixels with cloud fraction < 0.2
+            bin_edges = 0:1e-12:1e-9;
+            if ~as_shape_factor
+                x_str = '[NO_2] (mixing ratio, above 400 hPa)';
+            else
+                x_str = 'NO_2 shape factor (above 400 hPa)';
+            end
+            counts_monthly = histc(ut_no2_monthly(cc), bin_edges);
+            counts_daily = histc(ut_no2_daily(cc), bin_edges);
+            figure; 
+            line(bin_edges, counts_monthly, 'color', 'b', 'linewidth', 2);
+            line(bin_edges, counts_daily, 'color', 'r', 'linewidth', 2);
+            legend('Monthly profiles', 'Daily Profiles');
+            xlabel(x_str);
+            ylabel('Counts per 0.1 pptv');
+            
+            
         end
     end
     
@@ -857,10 +1008,10 @@ classdef misc_behr_update_plots
                     else
                         file_stem = regexp(F(1).name, 'OMI_BEHR.+(?=\d\d\d\d\d\d\d\d)', 'match', 'once');
                         [~, no2_vcds, lon_grid, lat_grid, count_grid, avg_config] = no2_column_map_2014(djf_start, djf_end, lon_lim, lat_lim,...
-                        'mapfield', data_field, 'behrdir', daily_dir, 'fileprefix', file_stem,...
-                        'makefig', false);
+                            'mapfield', data_field, 'behrdir', daily_dir, 'fileprefix', file_stem,...
+                            'makefig', false);
                     end
-                
+                    
                     fprintf('Saving as %s\n', save_name);
                     save(save_name, 'no2_vcds', 'lon_grid', 'lat_grid', 'count_grid', 'avg_config');
                 end
@@ -876,34 +1027,35 @@ classdef misc_behr_update_plots
                         avg_config = [];
                     else
                         [~, no2_vcds, lon_grid, lat_grid, count_grid, avg_config] = no2_column_map_2014(jja_start, jja_end, lon_lim, lat_lim,...
-                        'mapfield', data_field, 'behrdir', daily_dir, 'fileprefix', 'OMI_BEHR_v2-1C_',...
-                        'makefig', false);
+                            'mapfield', data_field, 'behrdir', daily_dir, 'fileprefix', 'OMI_BEHR_v2-1C_',...
+                            'makefig', false);
                     end
-                
+                    
                     fprintf('Saving as %s\n', save_name);
                     save(save_name, 'no2_vcds', 'lon_grid', 'lat_grid', 'count_grid', 'avg_config');
                 end
             end
         end
         
-        function [title_str, quantity_str, unit_str, time_period] = get_title_from_file_name(filename, base_dir, new_dir)
+        function [title_str, quantity_str, unit_str, time_period] = get_title_from_file_name(base_filename, base_dir, new_filename, new_dir)
             % Parses one of the average .mat files names to figure out what
             % the title string should be and the colorbar limits.
             E = JLLErrors;
             
-            is_diff = exist('new_dir', 'var');
+            is_diff = nargin > 2;
             
-            [~, filename] = fileparts(filename); % remove any path or extension
+            [~, base_filename] = fileparts(base_filename); % remove any path or extension
             [~, base_dir] = fileparts(base_dir);
             if is_diff
+                [~, new_filename] = fileparts(new_filename);
                 [~, new_dir] = fileparts(new_dir);
             end
             
-            name_parts = strsplit(filename, '-');
-            
+            base_name_parts = strsplit(base_filename, '-');
+            new_name_parts = strsplit(new_filename, '-');
             % Quantity - shorten it quite a bit so the title isn't insanely
             % long
-            switch name_parts{1}
+            switch base_name_parts{1}
                 case 'BEHRColumnAmountNO2Trop'
                     quantity_str = 'NO_2 VCD';
                     unit_str = 'molec. cm^{-2}';
@@ -917,15 +1069,19 @@ classdef misc_behr_update_plots
                     quantity_str = 'Surf Refl';
                     unit_str = 'unitless';
                 otherwise
-                    E.notimplemented('No quantity title for data field "%s"', name_parts{1});
+                    E.notimplemented('No quantity title for data field "%s"', base_name_parts{1});
             end
             
             % Time period (DJF or JJA), should always be the second part of
             % the file name
-            time_period = name_parts{2};
+            time_period = base_name_parts{2};
             
             % Monthly or daily profiles used
-            profs_used = sprintf('%s Profs', name_parts{3});
+            if ~is_diff || strcmp(base_name_parts{3}, new_name_parts{3});
+                profs_used = sprintf('%s Profs', base_name_parts{3});
+            else
+                profs_used = sprintf('%s vs %s Profs', new_name_parts{3}, base_name_parts{3});
+            end
             
             if is_diff
                 title_str = sprintf('%s: %s vs %s (%s, %s)', quantity_str, new_dir, base_dir, time_period, profs_used);
@@ -934,7 +1090,7 @@ classdef misc_behr_update_plots
             end
         end
         
-        function plot_change_avg(old_lon_grid, old_lat_grid, old_val, new_lon_grid, new_lat_grid, new_val, diff_type, title_str, quantity_name, unit_name, save_dir)
+        function fig = plot_change_avg(old_lon_grid, old_lat_grid, old_val, new_lon_grid, new_lat_grid, new_val, diff_type, title_str, quantity_name, unit_name, save_dir)
             % pass an empty string as save_dir to just plot the figure
             % without saving or closing it
             E = JLLErrors;
@@ -978,16 +1134,16 @@ classdef misc_behr_update_plots
             end
             
             fig=figure; pcolor(lon_grid, lat_grid, val_diff);
-            shading flat; 
-            cb=colorbar; 
-            caxis(clims); 
+            shading flat;
+            cb=colorbar;
+            caxis(clims);
             colormap(cmap);
             state_outlines('k', 'not', 'ak', 'hi');
             title(title_str);
             
             
             cb.Label.String = cb_label;
-            cb.FontSize = 14;
+            set(gca,'fontsize',14,'xtick',-120:10:-70,'ytick',25:5:50); % ensure consistent ticks
             
             if ~isempty(save_dir)
                 if exist(misc_behr_update_plots.figs_root_dir, 'dir') && ~exist(save_dir, 'dir')
@@ -1000,6 +1156,49 @@ classdef misc_behr_update_plots
                 saveas(fig, fullfile(save_dir, save_name), 'png');
                 close(fig);
             end
+        end
+        
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%
+        % Other utility functions %
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%
+        
+        function full_dir = fullpath_incr_dir(dir_in)
+            % If it does not start with "/" or "./", then consider it just
+            % the end folder of the increment directory and prepend the
+            % usual increment directory front path. Otherwise, it's either
+            % a full absolute or relative path and should be left as-is
+            if regcmp(dir_in, '^\.?/')
+                full_dir = dir_in;
+                return
+            end
+            
+            % Assume that the "final" directory will split into the proper
+            % increment path stem and the final subdir
+            incr_dir_stem = fileparts(misc_behr_update_plots.behr_final_dir);
+            full_dir = fullfile(incr_dir_stem, dir_in);
+        end
+        
+        function Data = apply_outside(Data, data_dir)
+            use_outside_dirs = {misc_behr_update_plots.behr_v2_1C_dir, misc_behr_update_plots.behr_nasa_only_dir,...
+                misc_behr_update_plots.behr_nasa_brdf_dir, misc_behr_update_plots.behr_nasa_brdfD_dir,...
+                misc_behr_update_plots.behr_nasa_brdf_vis_dir, misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir,...
+                misc_behr_update_plots.behr_nasa_brdf_vis_profs_tempfix_dir, misc_behr_update_plots.behr_nasa_brdf_vis_profs_wrftemp_dir};
+            
+            if ismember(data_dir, use_outside_dirs)
+                outside = load(fullfile(behr_analysis_repo_dir, 'Utils', 'outside.mat'));
+                outside = ~logical(outside.outside);
+                Data.no2_vcds(outside) = nan;
+            end
+        end
+        
+        function [file_list] = make_common_files_list(list_of_files, list_to_match)
+            % Compare lists of old and new average files. Find common data
+            % fields and time periods, but don't match for monthly/daily
+            % profiles
+            new_files_tmp = regexprep(list_to_match, '(Daily|Monthly)', '');
+            old_files_tmp = regexprep(list_of_files, '(Daily|Monthly)', '');
+            xx_base = find_common_elements(old_files_tmp, new_files_tmp, 'nodup');
+            file_list = list_of_files(xx_base);
         end
     end
     
