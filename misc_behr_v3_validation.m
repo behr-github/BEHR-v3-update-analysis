@@ -169,7 +169,7 @@ classdef misc_behr_v3_validation
             end
             
             if do_save
-                save(misc_behr_v3_validation.gcas_comp_file, '-struct', 'insitu_comparison');
+                save(misc_behr_v3_validation.profile_comp_file, '-struct', 'insitu_comparison');
             end
         end
         
@@ -286,7 +286,7 @@ classdef misc_behr_v3_validation
             end
             
             profile_types = {'daily', 'monthly', 'v2'};
-            campaigns = {'discover_md', 'discover_ca', 'discover_tx', 'discover_co'};
+            campaigns = {'dc3', 'discover_md', 'discover_ca', 'discover_tx', 'discover_co'};
             %campaigns = {'discover_ca'};
             
             % Loop through each campaign, load each merge file, find each
@@ -302,16 +302,28 @@ classdef misc_behr_v3_validation
                 all_merge_wrf_dirs = make_empty_struct_from_cell(profile_types, {{}});
                 for b=1:numel(merges)
                     M = load(merges(b).name);
-                    % Make raw structures for each profile that is listed
-                    % in the file
-                    Raws = misc_behr_v3_validation.make_raw_struct(M.Merge, merge_names, campaigns{a});
-                    profile_fns = fieldnames(Raws);
                     
-                    % Calculate the OMI overpass time from the v3 BEHR
-                    % files, getting the closest overpass in space. We can
-                    % use this to decide if a profile is important for the
-                    % retrieval
-                    OmiTimes = misc_behr_v3_validation.calc_nearest_omi_times(M.Merge.metadata.date, Raws);
+                    % Make raw structures for each profile that is listed
+                    % in the file. This is only used when matching
+                    % individual profiles, so if we're working on a
+                    % campaign that does not include individual profiles
+                    % (e.g. DC3) then can (and must) skip this part, since
+                    % the Raws structure relies on the profile numbers
+                    % field. We can also skip calculating the nearest OMI
+                    % time, since that might be time consuming and it's
+                    % only needed for matching/filtering individual
+                    % profiles.
+                    if ~isempty(merge_names.profile_numbers)
+                        Raws = misc_behr_v3_validation.make_raw_struct(M.Merge, merge_names, campaigns{a});
+                        profile_fns = fieldnames(Raws);
+                        
+                        
+                        % Calculate the OMI overpass time from the v3 BEHR
+                        % files, getting the closest overpass in space. We can
+                        % use this to decide if a profile is important for the
+                        % retrieval
+                        OmiTimes = misc_behr_v3_validation.calc_nearest_omi_times(M.Merge.metadata.date, Raws);
+                    end
                     
                     for p=1:numel(profile_types)
                         % Get the right WRF directory for the given profile
@@ -332,6 +344,17 @@ classdef misc_behr_v3_validation
                         
                         if ~ismember(wrf_dir, all_merge_wrf_dirs.(profile_types{p}))
                             all_merge_wrf_dirs.(profile_types{p}){end+1} = wrf_dir;
+                        end
+                        
+                        % Only DISCOVER campaigns have profile numbers.
+                        % Other campaigns (e.g. DC3) didn't do specific
+                        % satellite verification spirals, so we can't
+                        % compare individual profiles (at least not as
+                        % easily). So now that we've gathered the WRF
+                        % directories that we need, skip the individual
+                        % profile matching.
+                        if isempty(merge_names.profile_numbers)
+                            continue
                         end
                         
                         for f=1:numel(profile_fns)
@@ -513,14 +536,17 @@ classdef misc_behr_v3_validation
         % Plotting functions %
         %%%%%%%%%%%%%%%%%%%%%%
         
-        function plot_one_insitu_comparison(varargin)
+        function varargout = plot_one_insitu_comparison(varargin)
             allowed_vars = {'air_no2', 'omi_no2', 'behr_no2'};
             
             labels = struct('air_no2', 'Aircraft NO_2 VCD (molec. cm^{-2})',...
                 'omi_no2', 'NASA NO_2 VCD (molec. cm^{-2})',...
                 'behr_no2', 'BEHR NO_2 VCD (molec. cm^{-2})');
             
-            misc_behr_v3_validation.plot_one_vcd_comparison(misc_behr_v3_validation.profile_comp_file, allowed_vars, labels, varargin{:});
+            [fig, fit] = misc_behr_v3_validation.plot_one_vcd_comparison(misc_behr_v3_validation.profile_comp_file, allowed_vars, labels, varargin{:});
+            if nargout > 0
+                varargout = {fig, fit};
+            end
         end
         
         function plot_one_gcas_comparison(varargin)
@@ -533,8 +559,70 @@ classdef misc_behr_v3_validation
             misc_behr_v3_validation.plot_one_vcd_comparison(misc_behr_v3_validation.gcas_vec_comp_file, allowed_vars, labels, varargin{:});
         end
         
+        function [values, column_names, row_names, section_end_rows ] = tabulate_insitu_comparisons(varargin)
+            p = inputParser;
+            p.addParameter('campaigns',{});
+            
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            campaigns = pout.campaigns;
+            
+            allowed_vars = {'air_no2', 'omi_no2', 'behr_no2'};
+            
+            labels = struct('air_no2', 'Aircraft NO_2 VCD (molec. cm^{-2})',...
+                'omi_no2', 'NASA NO_2 VCD (molec. cm^{-2})',...
+                'behr_no2', 'BEHR NO_2 VCD (molec. cm^{-2})');
+            
+            
+            comp_file = misc_behr_v3_validation.profile_comp_file;
+            if isempty(campaigns)
+                % Need this to get the available campaigns
+                comp_struct = load(comp_file);
+                campaigns = fieldnames(comp_struct.v2.us_monthly);
+            end
+            
+            for i_var = 2:3
+                x_var = 'air_no2';
+                y_var = allowed_vars{i_var};
+                for i_campaign = 1:numel(campaigns)
+                    [fig, fit_substruct] = misc_behr_v3_validation.plot_one_vcd_comparison(comp_file, allowed_vars, labels, x_var, y_var, 'both', campaigns{i_campaign}, 't1200_1500', 'plot_type', 'scatter', 'remove_outliers', true);
+                    close(fig)
+                    fit_data.(y_var).(campaigns{i_campaign}) = fit_substruct;
+                end
+            end
+            
+            % Ultimately want the table to look like
+            %
+            %                              | Slope | Intercept | R2 or p-value |
+            %            | SP   | v2       |       |           |               | 
+            %   campaign |      | v3       |       |           |               | 
+            %            | BEHR | v2       |       |           |               | 
+            %            |      | v3 (M)   |       |           |               | 
+            %            |      | v3 (D)   |       |           |               | 
+            row_names = {};
+            values = [];
+            section_end_rows = [];
+            products = {'omi_no2','behr_no2'};
+            product_table_names = {'SP','BEHR'};
+            for i_campaign = 1:numel(campaigns)
+                for i_prod = 1:numel(products)
+                    substruct = fit_data.(products{i_prod}).(campaigns{i_campaign});
+                    for i_sub = 1:numel(substruct)
+                        this_row_names = {upper(strrep(campaigns{i_campaign},'_', '-')), sprintf('%s %s', product_table_names{i_prod}, substruct(i_sub).prof_type)};
+                        this_row_values = [substruct(i_sub).P(1), substruct(i_sub).P(2), substruct(i_sub).R2];
+                        row_names = cat(1, row_names, this_row_names);
+                        values = cat(1, values, this_row_values);
+                    end
+                end
+                section_end_rows = veccat(section_end_rows, size(values,1));
+            end
+            
+            column_names = {'Campaign', 'Product', 'Slope','Intercept','$R^2$'};
+        end
+        
     
-        function plot_one_vcd_comparison(comp_file, allowed_vars, labels, x_var, y_var, prof_mode, campaigns, time_range)
+        function varargout = plot_one_vcd_comparison(comp_file, allowed_vars, labels, x_var, y_var, prof_mode, campaigns, time_range, varargin)
             % This should be called from another method in this class that
             % provides the right comp_file, allowed_vars, and labels.
             %
@@ -544,6 +632,14 @@ classdef misc_behr_v3_validation
             % misc_behr_v3_validation.profile_comp_file. If omitted these
             % inputs will be asked interactively
             E = JLLErrors;
+            p = inputParser;
+            p.addParameter('remove_outliers',[]);
+            p.addParameter('plot_type','');
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            do_remove_outliers = pout.remove_outliers;
+            plot_type = pout.plot_type;
             
             comp_struct = load(comp_file);
             
@@ -593,6 +689,19 @@ classdef misc_behr_v3_validation
                 E.badinput('TIME_RANGE must be one of the strings: %s', strjoin(allowed_times, ', '));
             end
             
+            allowed_plot_types = {'scatter','map','zonal'};
+            if isempty(plot_type)
+                plot_type = ask_multichoice('Which type of plot?', allowed_plot_types, 'list', true);
+            elseif ~ismember(plot_type, allowed_plot_types)
+                E.badinput('plot_type must be one of: %s', strjoin(allowed_plot_types, ', '));
+            end
+            
+            if isempty(do_remove_outliers)
+                do_remove_outliers = ask_yn('Remove outliers?');
+            elseif ~isscalar(do_remove_outliers) || ~islogical(do_remove_outliers)
+                E.badinput('do_remove_outliers must be a scalar logical')
+            end
+            
             if regcmpi(x_var, 'behr') || regcmpi(y_var, 'behr')
                 v2_string = 'v2.1C';
                 v3M_string = 'v3.0A (M)';
@@ -625,43 +734,110 @@ classdef misc_behr_v3_validation
             fit_lines = gobjects(size(data_structs));
             fit_legends = cell(size(data_structs));
             line_fmts = struct('color', {'k','b','r', [0, 0.5, 0]}, 'marker', {'s','x','^','o'});
+            fit_data = struct('P',[],'R2',[],'StdDevM',[],'StdDevB',[],'p_value',[],'x_var', labels.(x_var), 'y_var', labels.(y_var), 'prof_type',legend_strings);
+            keep_fit_data = false(size(fit_data));
             
-            figure;
+            if strcmpi(plot_type,'scatter') || strcmpi(plot_type,'zonal')
+                fig = figure;
+            else
+                fig = gobjects(numel(data_structs),1);
+            end
             limits = [Inf, -Inf];
             for a=1:numel(data_structs)
+                lon = [];
+                lat = [];
                 x_no2 = [];
                 y_no2 = [];
+                % TODO: handle if request daily profiles for a campaign
+                % that doesn't have them
                 for b=1:numel(campaigns)
-                    x_no2 = veccat(x_no2, data_structs{a}.(campaigns{b}).(time_range).(x_var));
-                    y_no2 = veccat(y_no2, data_structs{a}.(campaigns{b}).(time_range).(y_var));
-                    limits(1) = min([limits(1), min(x_no2), min(y_no2)]);
-                    limits(2) = max([limits(2), max(x_no2), max(y_no2)]);
+                    if ~isempty(data_structs{a}.(campaigns{b}).(time_range))
+                        lon = veccat(lon, data_structs{a}.(campaigns{b}).(time_range).lon);
+                        lat = veccat(lat, data_structs{a}.(campaigns{b}).(time_range).lat);
+                        x_no2 = veccat(x_no2, data_structs{a}.(campaigns{b}).(time_range).(x_var));
+                        y_no2 = veccat(y_no2, data_structs{a}.(campaigns{b}).(time_range).(y_var));
+                        limits(1) = min([limits(1), min(x_no2), min(y_no2)]);
+                        limits(2) = max([limits(2), max(x_no2), max(y_no2)]);
+                    end
                 end
                 
-                data_lines(a) = line(x_no2(:), y_no2(:), 'linestyle', 'none', 'color', line_fmts(a).color, 'marker', line_fmts(a).marker);
-                [fit_x, fit_y, fit_legends{a}] = calc_fit_line(x_no2(:), y_no2(:), 'regression', 'RMA', 'xcoord', [-2e16, 2e16]);
-                fit_lines(a) = line(fit_x, fit_y, 'color', line_fmts(a).color, 'linestyle', '--');
+                not_nans = ~isnan(x_no2) & ~isnan(y_no2);
+                lon = lon(not_nans);
+                lat = lat(not_nans);
+                x_no2 = x_no2(not_nans);
+                y_no2 = y_no2(not_nans);
+                
+                if do_remove_outliers
+                    not_outliers = ~isoutlier(x_no2) & ~isoutlier(y_no2);
+                else
+                    not_outliers = true(size(x_no2));
+                end
+                
+                if ~isempty(x_no2) && ~isempty(y_no2)
+                    if strcmpi(plot_type, 'scatter')
+                        data_lines(a) = line(x_no2(not_outliers), y_no2(not_outliers), 'linestyle', 'none', 'color', line_fmts(a).color, 'marker', line_fmts(a).marker);
+                        [fit_x, fit_y, fit_legends{a}, fit_data_tmp] = calc_fit_line(x_no2(not_outliers), y_no2(not_outliers), 'regression', 'RMA', 'xcoord', [-2e16, 2e16]);
+                        fit_lines(a) = line(fit_x, fit_y, 'color', line_fmts(a).color, 'linestyle', '--');
+                        
+                        fit_data(a) = copy_structure_fields(fit_data_tmp, fit_data(a), fieldnames(fit_data_tmp));
+                        keep_fit_data(a) = true;
+                    elseif strcmpi(plot_type, 'zonal')
+                        data_lines(a) = line(lon(not_outliers), y_no2(not_outliers) - x_no2(not_outliers), 'linestyle', 'none', 'marker', line_fmts(a).marker, 'color', line_fmts(a).color);
+                    elseif strcmpi(plot_type, 'map')
+                        fig(a) = figure;
+                        scatter(lon(not_outliers), lat(not_outliers), [], y_no2(not_outliers) - x_no2(not_outliers));
+                        %set(gca,'xlimmode','manual');
+                        title(sprintf('%s - %s: %s', labels.(y_var), labels.(x_var), legend_strings{a}));
+                        cb = colorbar;
+                        cb.Label.String = 'molec. cm^{-2}';
+                        state_outlines('k','not','ak','hi');
+                        set(gca,'fontsize',16);
+                    else
+                        E.notimplemented('Do not know how to make plot type %s', plot_type);
+                    end
+                end
             end
             
-            xylims(calc_plot_limits(limits, 'pow10'));
+            if strcmpi(plot_type, 'scatter')
+                % Scatter puts all the data structs on the same plot, so we
+                % need to handle this after all the series have been
+                % plotted.
+                xylims(calc_plot_limits(limits, 'pow10'));
+                
+                xlabel(labels.(x_var));
+                ylabel(labels.(y_var));
+                
+                all_lines = gobjects(numel(data_lines)*2, 1);
+                all_lines(1:2:end) = data_lines;
+                all_lines(2:2:end) = fit_lines;
+                
+                all_legends = cell(1, numel(data_structs)*2);
+                all_legends(1:2:end) = legend_strings;
+                all_legends(2:2:end) = fit_legends;
+                
+                xx_valid = ishandle(all_lines);
+                
+                lgnd = legend(all_lines(xx_valid), all_legends(xx_valid),'Location','best');
+                title_campaigns = strrep(campaigns, '_', '\_');
+                title(strjoin(upper(title_campaigns), ', '));
+                ax = gca;
+                ax.FontSize = 16;
+                lgnd.FontSize = 10;
+            elseif strcmpi(plot_type,'zonal')
+                x_edges = get(gca,'xlim');
+                line(x_edges, [0 0], 'linestyle', '--', 'linewidth', 2, 'color', [0.5 0.5 0.5]);
+                legend(data_lines, legend_strings);
+                xlabel('Longitude');
+                ylabel(sprintf('%s - %s', labels.(y_var), labels.(x_var)));
+                set(gca,'fontsize',16);
+            end
             
-            xlabel(labels.(x_var));
-            ylabel(labels.(y_var));
-            
-            all_lines = gobjects(numel(data_lines)*2, 1);
-            all_lines(1:2:end) = data_lines;
-            all_lines(2:2:end) = fit_lines;
-            
-            all_legends = cell(1, numel(data_structs)*2);
-            all_legends(1:2:end) = legend_strings;
-            all_legends(2:2:end) = fit_legends;
-            
-            legend(all_lines, all_legends);
-            title_campaigns = strrep(campaigns, '_', '\_');
-            title(strjoin(upper(title_campaigns), ', '));
+            if nargout > 0
+                varargout = {fig, fit_data(keep_fit_data)};
+            end
         end
         
-        function plot_one_wrf_comparison(prof_types, campaign, prof_number, uncert_type)
+        function varargout = plot_one_wrf_comparison(prof_types, campaign, prof_number, uncert_type)
             E = JLLErrors;
             wrfcomp = load(misc_behr_v3_validation.wrf_comp_file);
             
@@ -695,7 +871,7 @@ classdef misc_behr_v3_validation
             end
             if ~exist('prof_types', 'var')
                 prof_types = ask_multiselect('Which profile types to include?', allowed_prof_types);
-            elseif ~ismember(prof_types, allowed_prof_types)
+            elseif any(~ismember(prof_types, allowed_prof_types))
                 E.badinput('PROF_TYPE must be one of: %s', strjoin(allowed_prof_types));
             end
             
@@ -727,7 +903,7 @@ classdef misc_behr_v3_validation
             % types. Use lighter versions of the colors for the raw data
             plt_cols = misc_behr_v3_validation.plot_colors;
             
-            figure;
+            fig=figure;
             fns = fieldnames(no2);
             l = gobjects(numel(fns),1);
             legstr = cell(1, numel(fns));
@@ -747,6 +923,10 @@ classdef misc_behr_v3_validation
             set(gca,'ydir','reverse','fontsize',14);
             xlabel('[NO_2] (pptv)');
             ylabel('Pressure (hPa)');
+            
+            if nargout > 0
+                varargout{1} = fig;
+            end
         end
         
         function plot_aircraft_on_wrf(prof_type, campaign, prof_number, wrf_level)
@@ -870,7 +1050,9 @@ classdef misc_behr_v3_validation
                     E.badinput('SITE_NUMBER must be a scalar number')
                 end
                 
-                if ~ismember(site_number, site_numbers)
+                if isnan(site_number)
+                    return
+                elseif ~ismember(site_number, site_numbers)
                     E.badinput('SITE_NUMBER must be one of: %s', strjoin(allowed_site_numbers_strs));
                 end
             end
