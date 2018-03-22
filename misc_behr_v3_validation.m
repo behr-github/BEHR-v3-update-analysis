@@ -29,7 +29,7 @@ classdef misc_behr_v3_validation
         end
         
         function value = profile_comp_file()
-            value = fullfile(misc_behr_v3_validation.validation_root_dir, 'VCD-Comparison', 'profile-structs.mat');
+            value = fullfile(misc_behr_v3_validation.validation_root_dir, 'VCD-Comparison', 'profile-structs-new.mat');
         end
         
         function value = gcas_comp_file()
@@ -76,15 +76,19 @@ classdef misc_behr_v3_validation
             versions = {'v2','v3'};
             regions = {'us'};
             prof_modes = {'monthly', 'daily'};
-            behr_field = 'BEHRColumnAmountNO2Trop'; % can switch to VisOnly later
             insitu_comparison = struct();
             for v=1:numel(versions)
                 if strcmpi(versions{v}, 'v3')
                     n_regions = numel(regions);
                     n_profs = numel(prof_modes);
+                    % The proper version strings won't work as field names,
+                    % so we map the "versions" version name to the proper
+                    % one here.
+                    behr_vers = 'v3-0A';
                 else
                     n_regions = 1;
                     n_profs = 1;
+                    behr_vers = 'v2-1C';
                 end
                 
                 version_comp = struct();
@@ -93,10 +97,12 @@ classdef misc_behr_v3_validation
                     for p=1:n_profs
                         if strcmpi(versions{v}, 'v3')
                             behr_dir = behr_paths.BEHRMatSubdir(regions{r}, prof_modes{p});
-                            behr_prefix = regexp(behr_filename(today, prof_modes{p}, regions{r}), 'OMI_BEHR.*(?=\d\d\d\d\d\d\d\d)', 'match', 'once');
+                            behr_prefix = regexp(behr_filename(today, prof_modes{p}, regions{r}), 'OMI_BEHR.*(?=_v\d-\d[A-Z]_\d\d\d\d\d\d\d\d)', 'match', 'once');
+                            wrf_prof_mode = ''; % an empty string tell verify_sat_vs_aircraft to determine the profile mode from the BEHR Data structure
                         else
                             behr_dir = misc_behr_v3_validation.behr_v2_dir;
-                            behr_prefix = 'OMI_BEHR_v2-1C_';
+                            behr_prefix = 'OMI_BEHR';
+                            wrf_prof_mode = 'monthly'; % verify_sat_vs_aircraft can read the BEHRProfileMode field in Data to determine which profiles to use, but the v2 files don't have that.
                         end
                         % First we do the four DISCOVER campaigns, which are nice
                         % because they are geared towards satellite validation with
@@ -117,46 +123,56 @@ classdef misc_behr_v3_validation
                         behr_comp = struct();
                         all_campaigns = [spiral_campaigns, other_campaigns];
                         campaign_use_ranges = [repmat({''}, size(spiral_campaigns)), repmat({'ranges'}, size(other_campaigns))];
-                        campaign_range_files = [repmat({false}, size(spiral_campaigns)), range_files];
+                        campaign_range_files = [repmat({''}, size(spiral_campaigns)), range_files];
                         % Specify whether to use the LIF or
                         % NCAR/chemiluminesnce/non-LIF NO2 measurement.
-                        no2_fields = {'lif','lif','lif','lif','lif','lif','lif','lif','cl'};
+                        no2_fields = {'no2_lif','no2_lif','no2_lif','no2_lif','no2_lif','no2_lif','no2_lif','no2_lif','no2_ncar'};
                         for a=1:numel(all_campaigns)
                             campaign = struct();
                             for b=1:numel(time_windows)
-                                [prof_times, time_fieldname] = misc_behr_v3_validation.format_profile_time_range(time_windows(b));
-                                comparison_params = {'campaign', all_campaigns{a},...
-                                    'profile_input', campaign_use_ranges{a},...
-                                    'ask_range', campaign_range_files{a},...
-                                    'behr_dir', behr_dir,...
+                                [~, time_fieldname] = misc_behr_v3_validation.format_profile_time_range(time_windows(b));
+%                                 comparison_params = {'campaign', all_campaigns{a},...
+%                                     'profile_input', campaign_use_ranges{a},...
+%                                     'ask_range', campaign_range_files{a},...
+%                                     'behr_dir', behr_dir,...
+%                                     'behr_prefix', behr_prefix,...
+%                                     'starttime', prof_times{1},...
+%                                     'endtime', prof_times{2},...
+%                                     'minheight', 0,...
+%                                     'minagl', 0.5,...
+%                                     'cloudtype', 'omi',...
+%                                     'cloudfrac', 0.2,...
+%                                     'rowanomaly', 'XTrackFlags',...
+%                                     'behrfield', behr_field,...
+%                                     'no2field', no2_fields{a},...
+%                                     'surf_pres_choice', 'yes',...
+%                                     'debug', 1};
+                                comparison_params = {'behr_dir', behr_dir,...
                                     'behr_prefix', behr_prefix,...
-                                    'starttime', prof_times{1},...
-                                    'endtime', prof_times{2},...
-                                    'minheight', 0,...
-                                    'minagl', 0.5,...
-                                    'cloudtype', 'omi',...
-                                    'cloudfrac', 0.2,...
-                                    'rowanomaly', 'XTrackFlags',...
-                                    'behrfield', behr_field,...
-                                    'no2field', no2_fields{a},...
-                                    'surf_pres_choice', 'yes',...
-                                    'debug', 1};
+                                    'behr_version', behr_vers,...
+                                    'utc_range_file', campaign_range_files{a},...
+                                    'no2_field', no2_fields{a},...
+                                    'DEBUG_LEVEL',1,...
+                                    'time_range', time_windows(b),...
+                                    'wrf_prof_mode', wrf_prof_mode,...
+                                    };
                                 try
-                                    [sub.lon, sub.lat, sub.omi_no2, sub.behr_no2, sub.air_no2, sub.dbinfo, sub.dates] = Run_Spiral_Verification(comparison_params{:});
+                                    [all_profs_final, all_profs_detail] = run_insitu_verification(all_campaigns{a}, prof_modes{p}, comparison_params{:});
+                                    all_profs_final.details = all_profs_detail;
                                 catch err
-                                    if strcmp(err.identifier, 'Run_Spiral_Verification:run_failure')
+                                    if strcmp(err.identifier, 'call_verify:file_not_found')
                                         % The daily product will not have
                                         % data for some days which causes
                                         % an error in
                                         % Run_Spiral_Verification. 
-                                        sub = [];
-                                        fprintf('No BEHR %s data available for region = %s, prof_mode = %s\n', versions{v}, regions{r}, prof_modes{p});
+                                        all_profs_final = [];
+                                        fprintf(err.message);
                                     else
                                         rethrow(err);
                                     end
                                 end
                                 
-                                campaign.(time_fieldname) = sub;
+                                campaign.(time_fieldname) = all_profs_final;
                             end
                             behr_comp.(all_campaigns{a}) = campaign;
                         end
@@ -537,10 +553,10 @@ classdef misc_behr_v3_validation
         %%%%%%%%%%%%%%%%%%%%%%
         
         function varargout = plot_one_insitu_comparison(varargin)
-            allowed_vars = {'air_no2', 'omi_no2', 'behr_no2'};
+            allowed_vars = {'air_no2', 'sp_no2', 'behr_no2'};
             
             labels = struct('air_no2', 'Aircraft NO_2 VCD (molec. cm^{-2})',...
-                'omi_no2', 'NASA NO_2 VCD (molec. cm^{-2})',...
+                'sp_no2', 'NASA NO_2 VCD (molec. cm^{-2})',...
                 'behr_no2', 'BEHR NO_2 VCD (molec. cm^{-2})');
             
             [fig, fit] = misc_behr_v3_validation.plot_one_vcd_comparison(misc_behr_v3_validation.profile_comp_file, allowed_vars, labels, varargin{:});
@@ -568,10 +584,10 @@ classdef misc_behr_v3_validation
             
             campaigns = pout.campaigns;
             
-            allowed_vars = {'air_no2', 'omi_no2', 'behr_no2'};
+            allowed_vars = {'air_no2', 'sp_no2', 'behr_no2'};
             
             labels = struct('air_no2', 'Aircraft NO_2 VCD (molec. cm^{-2})',...
-                'omi_no2', 'NASA NO_2 VCD (molec. cm^{-2})',...
+                'sp_no2', 'NASA NO_2 VCD (molec. cm^{-2})',...
                 'behr_no2', 'BEHR NO_2 VCD (molec. cm^{-2})');
             
             
@@ -603,7 +619,7 @@ classdef misc_behr_v3_validation
             row_names = {};
             values = [];
             section_end_rows = [];
-            products = {'omi_no2','behr_no2'};
+            products = {'sp_no2','behr_no2'};
             product_table_names = {'SP','BEHR'};
             for i_campaign = 1:numel(campaigns)
                 for i_prod = 1:numel(products)
@@ -752,8 +768,8 @@ classdef misc_behr_v3_validation
                 % that doesn't have them
                 for b=1:numel(campaigns)
                     if ~isempty(data_structs{a}.(campaigns{b}).(time_range))
-                        lon = veccat(lon, data_structs{a}.(campaigns{b}).(time_range).lon);
-                        lat = veccat(lat, data_structs{a}.(campaigns{b}).(time_range).lat);
+                        lon = veccat(lon, data_structs{a}.(campaigns{b}).(time_range).profile_lon);
+                        lat = veccat(lat, data_structs{a}.(campaigns{b}).(time_range).profile_lat);
                         x_no2 = veccat(x_no2, data_structs{a}.(campaigns{b}).(time_range).(x_var));
                         y_no2 = veccat(y_no2, data_structs{a}.(campaigns{b}).(time_range).(y_var));
                         limits(1) = min([limits(1), min(x_no2), min(y_no2)]);
