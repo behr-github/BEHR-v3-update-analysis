@@ -12,6 +12,10 @@ classdef misc_behr_v3_validation
                 'v2', struct('raw', 'g', 'avg', [0 0.5 0]),... % greens for version 2
                 'monthly', struct('raw', [1 0.75 0], 'avg', 'r'),... % red and orange for the monthly profiles
                 'daily', struct('raw', 'c', 'avg', 'b')); % blue and cyan for the daily profiles
+            
+        profile_extend_methods = {'wrf','geos','extrap'};
+        
+        
     end
     
 
@@ -28,8 +32,21 @@ classdef misc_behr_v3_validation
             value = fullfile(misc_behr_v3_validation.my_dir, 'Workspaces', 'Validation');
         end
         
-        function value = profile_comp_file()
-            value = fullfile(misc_behr_v3_validation.validation_root_dir, 'VCD-Comparison', 'profile-structs-new.mat');
+        function value = gc_data_path()
+            value = fullfile(misc_behr_v3_validation.validation_root_dir, 'GEOS-Chem-Data');
+        end
+        
+        function value = profile_comp_file(extend_method)
+            E = JLLErrors;
+            narginchk(1,1);
+            if ~ismember(extend_method, misc_behr_v3_validation.profile_extend_methods)
+                E.badinput('EXTEND_METHOD must be one of: %s', strjoin(misc_behr_v3_validation.profile_extend_methods{:}));
+            end
+            value = fullfile(misc_behr_v3_validation.validation_root_dir, 'VCD-Comparison', sprintf('profile-structs-%s.mat', extend_method));
+        end
+        
+        function value = pandora_comp_file()
+            value = fullfile(misc_behr_v3_validation.validation_root_dir, 'VCD-Comparison', 'pandora-structs.mat');
         end
         
         function value = gcas_comp_file()
@@ -59,18 +76,77 @@ classdef misc_behr_v3_validation
         function value = wrf_comp_file()
             value = fullfile(misc_behr_v3_validation.validation_root_dir, 'Profile-Comparison', 'wrf-match-structs.mat');
         end
-    
+        
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        % Interactive methods for getting parameters %
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        
+        function extend_method = get_profile_extend_method(extend_method)
+            allowed_methods = misc_behr_v3_validation.profile_extend_methods;
+            if nargin < 1 || isempty(extend_method)
+                extend_method = ask_multichoice('Which profile extension method to use?', allowed_methods, 'list', true);
+            elseif ~ismember(extend_method, allowed_methods)
+                E.badinput('EXTEND_METHOD must be one of: %s', strjoin(allowed_methods, ', '));
+            end
+        end
+        
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         % Generative validation methods %
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         
-        function insitu_comparison = generate_vcd_comparison_structs(do_save)
+        
+        function insitu_comparison = generate_vcd_comparison_structs(varargin)
             E = JLLErrors;
             
-            if ~exist('do_save', 'var')
+            p = inputParser;
+            p.addParameter('data_source', '');
+            p.addParameter('extend_method', '');
+            p.addParameter('do_save', nan);
+            p.addParameter('overwrite', nan);
+            
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            data_source = pout.data_source;
+            profile_extend_method = pout.extend_method;
+            do_save = pout.do_save;
+            do_overwrite = pout.overwrite;
+            
+            allowed_data_sources = {'aircraft', 'pandora'};
+            if isempty(data_source)
+                data_source = ask_multichoice('Which data source to use?', allowed_data_sources, 'list', true);
+            elseif ~ismember(data_source, allowed_data_sources)
+                E.badinput('DATA_SOURCE must be one of: %s', strjoin(allowed_data_sources, ', '));
+            end
+            
+            if strcmpi(data_source, 'aircraft')
+                profile_extend_method = misc_behr_v3_validation.get_profile_extend_method(profile_extend_method);
+            end
+            
+            if isnan(do_save)
                 do_save = ask_yn('Save the comparison files generated?');
             elseif ~isscalar(do_save) || ~islogical(do_save)
                 E.badinput('DO_SAVE must be a scalar logical');
+            end
+            
+            if do_save
+                if strcmpi(data_source, 'aircraft')
+                    comparison_save_name = misc_behr_v3_validation.profile_comp_file(profile_extend_method);
+                elseif strcmpi(data_source, 'pandora')
+                    comparison_save_name = misc_behr_v3_validation.pandora_comp_file;
+                end
+                
+                if exist(comparison_save_name, 'file')
+                    if isnan(do_overwrite)
+                        do_overwrite = ask_yn(sprintf('%s exists. Overwrite?', comparison_save_name));
+                    end
+                    
+                    if ~do_overwrite
+                        insitu_comparison = [];
+                        fprintf('%s exists and ''overwrite'' is false. Aborting.\n', comparison_save_name);
+                        return
+                    end
+                end
             end
             
             versions = {'v2','v3'};
@@ -104,74 +180,53 @@ classdef misc_behr_v3_validation
                             behr_prefix = 'OMI_BEHR';
                             wrf_prof_mode = 'monthly'; % verify_sat_vs_aircraft can read the BEHRProfileMode field in Data to determine which profiles to use, but the v2 files don't have that.
                         end
-                        % First we do the four DISCOVER campaigns, which are nice
-                        % because they are geared towards satellite validation with
-                        % spirals clearly marked in the data.
-                        spiral_campaigns = {'discover_md', 'discover_ca', 'discover_tx', 'discover_co'};
-                        other_campaigns = {'seac4rs', 'dc3', 'arctas_carb', 'intex_b', 'soas'};
-                        % For each campaign that doesn't identify the
-                        % profiles in the data, we need to specify which
-                        % of the precreated range files that identify
-                        % profiles by the UTC ranges to use.
-                        range_files = {'SEAC4RS_Profile_Ranges_Std.mat',...
-                                       'DC3_Profile_Ranges_Std.mat',...
-                                       'ARCTAS-CA Altitude Ranges Exclusive 3.mat',...
-                                       'INTEXB_Profile_UTC_Ranges.mat',...
-                                       'SOAS_Profile_UTC_Ranges.mat'};
-                        time_windows = [1.5, 3]; % how far away from satellite overpass (in hours) the profile is allowed to be
                         
-                        behr_comp = struct();
-                        all_campaigns = [spiral_campaigns, other_campaigns];
-                        campaign_use_ranges = [repmat({''}, size(spiral_campaigns)), repmat({'ranges'}, size(other_campaigns))];
-                        campaign_range_files = [repmat({''}, size(spiral_campaigns)), range_files];
-                        % Specify whether to use the LIF or
-                        % NCAR/chemiluminesnce/non-LIF NO2 measurement.
-                        no2_fields = {'no2_lif','no2_lif','no2_lif','no2_lif','no2_lif','no2_lif','no2_lif','no2_lif','no2_ncar'};
+                        if strcmpi(data_source, 'aircraft')
+                            % Set up the necessary inputs for comparing
+                            % against aircraft data
+                            
+                            % First we do the four DISCOVER campaigns, which are nice
+                            % because they are geared towards satellite validation with
+                            % spirals clearly marked in the data.
+                            spiral_campaigns = {'discover_md', 'discover_ca', 'discover_tx', 'discover_co'};
+                            other_campaigns = {'seac4rs', 'dc3', 'arctas_carb', 'intex_b', 'soas'};
+                            % For each campaign that doesn't identify the
+                            % profiles in the data, we need to specify which
+                            % of the precreated range files that identify
+                            % profiles by the UTC ranges to use.
+                            range_files = {'SEAC4RS_Profile_Ranges_Std.mat',...
+                                'DC3_Profile_Ranges_Std.mat',...
+                                'ARCTAS-CA Altitude Ranges Exclusive 3.mat',...
+                                'INTEXB_Profile_UTC_Ranges.mat',...
+                                'SOAS_Profile_UTC_Ranges.mat'};
+                            time_windows = [1.5, 3]; % how far away from satellite overpass (in hours) the profile is allowed to be
+                            
+                            behr_comp = struct();
+                            all_campaigns = [spiral_campaigns, other_campaigns];
+                            campaign_range_files = [repmat({''}, size(spiral_campaigns)), range_files];
+                            % Specify whether to use the LIF or
+                            % NCAR/chemiluminesnce/non-LIF NO2 measurement.
+                            no2_fields = {'no2_lif','no2_lif','no2_lif','no2_lif','no2_lif','no2_lif','no2_lif','no2_lif','no2_ncar'};
+                        elseif strcmpi(data_source, 'pandora')
+                            % Right now I only have Pandora data for the
+                            % four DISCOVER campaigns.
+                            all_campaigns = {'discover_md','discover_ca','discover_tx','discover_co'};
+                            time_windows = 1;
+                        else
+                            E.notimplemented('No input settings for data source = %s', data_source);
+                        end
+                        
                         for a=1:numel(all_campaigns)
                             campaign = struct();
                             for b=1:numel(time_windows)
                                 [~, time_fieldname] = misc_behr_v3_validation.format_profile_time_range(time_windows(b));
-%                                 comparison_params = {'campaign', all_campaigns{a},...
-%                                     'profile_input', campaign_use_ranges{a},...
-%                                     'ask_range', campaign_range_files{a},...
-%                                     'behr_dir', behr_dir,...
-%                                     'behr_prefix', behr_prefix,...
-%                                     'starttime', prof_times{1},...
-%                                     'endtime', prof_times{2},...
-%                                     'minheight', 0,...
-%                                     'minagl', 0.5,...
-%                                     'cloudtype', 'omi',...
-%                                     'cloudfrac', 0.2,...
-%                                     'rowanomaly', 'XTrackFlags',...
-%                                     'behrfield', behr_field,...
-%                                     'no2field', no2_fields{a},...
-%                                     'surf_pres_choice', 'yes',...
-%                                     'debug', 1};
-                                comparison_params = {'behr_dir', behr_dir,...
-                                    'behr_prefix', behr_prefix,...
-                                    'behr_version', behr_vers,...
-                                    'utc_range_file', campaign_range_files{a},...
-                                    'no2_field', no2_fields{a},...
-                                    'DEBUG_LEVEL',1,...
-                                    'time_range', time_windows(b),...
-                                    'wrf_prof_mode', wrf_prof_mode,...
-                                    };
-                                try
-                                    [all_profs_final, all_profs_detail] = run_insitu_verification(all_campaigns{a}, prof_modes{p}, comparison_params{:});
-                                    all_profs_final.details = all_profs_detail;
-                                catch err
-                                    if strcmp(err.identifier, 'call_verify:file_not_found')
-                                        % The daily product will not have
-                                        % data for some days which causes
-                                        % an error in
-                                        % Run_Spiral_Verification. 
-                                        all_profs_final = [];
-                                        fprintf(err.message);
-                                    else
-                                        rethrow(err);
-                                    end
+                                if strcmpi(data_source, 'aircraft')
+                                    all_profs_final = misc_behr_v3_validation.make_profile_vcd_comparison_for_one_campaign(all_campaigns{a}, prof_modes{p}, behr_dir, behr_prefix, behr_vers, campaign_range_files{a}, no2_fields{a}, time_windows(b), profile_extend_method, wrf_prof_mode);
+                                elseif strcmpi(data_source, 'pandora')
+                                    all_profs_final = misc_behr_v3_validation.make_pandora_vcd_comparison_for_one_campaign(all_campaigns{a}, prof_modes{p}, behr_dir, behr_prefix, behr_vers, time_windows(b));
+                                else
+                                    E.notimplemented('No validation method defined for data source = %s', data_source);
                                 end
-                                
                                 campaign.(time_fieldname) = all_profs_final;
                             end
                             behr_comp.(all_campaigns{a}) = campaign;
@@ -185,7 +240,47 @@ classdef misc_behr_v3_validation
             end
             
             if do_save
-                save(misc_behr_v3_validation.profile_comp_file, '-struct', 'insitu_comparison');
+                save(comparison_save_name, '-struct', 'insitu_comparison');
+            end
+        end
+        
+        function all_profs_final = make_pandora_vcd_comparison_for_one_campaign(campaign, prof_mode, behr_dir, behr_prefix, behr_vers, time_window)
+            comparison_params = {'behr_dir', behr_dir,...
+                'behr_prefix', behr_prefix,...
+                'behr_version', behr_vers,...
+                'behr_prof_mode', prof_mode,...
+                'time_range', time_window};
+            all_profs_final = run_pandora_verification(campaign, comparison_params{:});
+        end
+        
+        function all_profs_final = make_profile_vcd_comparison_for_one_campaign(campaign, prof_mode, behr_dir, behr_prefix, behr_vers, campaign_range_file, no2_field, time_window, extension_mode, wrf_prof_mode)
+            
+            comparison_params = {'behr_dir', behr_dir,...
+                'behr_prefix', behr_prefix,...
+                'behr_version', behr_vers,...
+                'utc_range_file', campaign_range_file,...
+                'no2_field', no2_field,...
+                'DEBUG_LEVEL',1,...
+                'time_range', time_window,...
+                'wrf_prof_mode', wrf_prof_mode,...
+                'gc_data_dir', misc_behr_v3_validation.gc_data_path(),...
+                'gc_data_year', 2012,...
+                'prof_extension', extension_mode,...
+                };
+            try
+                [all_profs_final, all_profs_detail] = run_insitu_verification(campaign, prof_mode, comparison_params{:});
+                all_profs_final.details = all_profs_detail;
+            catch err
+                if strcmp(err.identifier, 'call_verify:file_not_found')
+                    % The daily product will not have
+                    % data for some days which causes
+                    % an error in
+                    % Run_Spiral_Verification.
+                    all_profs_final = [];
+                    fprintf(err.message);
+                else
+                    rethrow(err);
+                end
             end
         end
         
@@ -553,13 +648,36 @@ classdef misc_behr_v3_validation
         %%%%%%%%%%%%%%%%%%%%%%
         
         function varargout = plot_one_insitu_comparison(varargin)
+            p = inputParser;
+            p.addParameter('extend_method', '');
+            p.KeepUnmatched = true;
+            
+            p.parse(varargin{:});
+            pout = p.Results;
+            extend_method = pout.extend_method;
+            
             allowed_vars = {'air_no2', 'sp_no2', 'behr_no2'};
             
             labels = struct('air_no2', 'Aircraft NO_2 VCD (molec. cm^{-2})',...
                 'sp_no2', 'NASA NO_2 VCD (molec. cm^{-2})',...
                 'behr_no2', 'BEHR NO_2 VCD (molec. cm^{-2})');
             
-            [fig, fit] = misc_behr_v3_validation.plot_one_vcd_comparison(misc_behr_v3_validation.profile_comp_file, allowed_vars, labels, varargin{:});
+            extend_method = misc_behr_v3_validation.get_profile_extend_method(extend_method);
+            
+            [fig, fit] = misc_behr_v3_validation.plot_one_vcd_comparison(misc_behr_v3_validation.profile_comp_file(extend_method), allowed_vars, labels, varargin{:});
+            if nargout > 0
+                varargout = {fig, fit};
+            end
+        end
+        
+        function varargout = plot_one_pandora_comparison(varargin)
+            allowed_vars = {'pandora_no2','sp_no2','behr_no2'};
+            
+            labels = struct('pandora_no2', 'Pandora NO_2 VCD (molec. cm^{-2})',...
+                'sp_no2', 'NASA NO_2 VCD (molec. cm^{-2})',...
+                'behr_no2', 'BEHR NO_2 VCD (molec. cm^{-2})');
+            
+            [fig, fit] = misc_behr_v3_validation.plot_one_vcd_comparison(misc_behr_v3_validation.pandora_comp_file, allowed_vars, labels, varargin{:});
             if nargout > 0
                 varargout = {fig, fit};
             end
@@ -578,11 +696,13 @@ classdef misc_behr_v3_validation
         function [values, column_names, row_names, section_end_rows ] = tabulate_insitu_comparisons(varargin)
             p = inputParser;
             p.addParameter('campaigns',{});
+            p.addParameter('extend_method', '');
             
             p.parse(varargin{:});
             pout = p.Results;
             
             campaigns = pout.campaigns;
+            extend_method = misc_behr_v3_validation.get_profile_extend_method(pout.extend_method);
             
             allowed_vars = {'air_no2', 'sp_no2', 'behr_no2'};
             
@@ -591,7 +711,7 @@ classdef misc_behr_v3_validation
                 'behr_no2', 'BEHR NO_2 VCD (molec. cm^{-2})');
             
             
-            comp_file = misc_behr_v3_validation.profile_comp_file;
+            comp_file = misc_behr_v3_validation.profile_comp_file(extend_method);
             if isempty(campaigns)
                 % Need this to get the available campaigns
                 comp_struct = load(comp_file);
