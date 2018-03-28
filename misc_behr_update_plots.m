@@ -5,6 +5,7 @@ classdef misc_behr_update_plots
     properties(Constant = true)
         start_date = '2012-01-01';
         end_date = '2012-12-31';
+        behr_v3B_var_trop_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/7b-VarTrop';
         behr_v3B_daily_fix_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/7a-DailyFix';
         behr_final_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/6-Final';
         behr_nasa_brdf_vis_profs_wrftemp_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/5b-WRFTemp';
@@ -38,6 +39,24 @@ classdef misc_behr_update_plots
         % Generation methods %
         %%%%%%%%%%%%%%%%%%%%%%
         
+        function make_behr_v3B_var_tropopause(do_overwrite)
+            if ~exist('do_overwrite', 'var')
+                do_overwrite = false;
+            end
+            
+            G = GitChecker;
+            G.addReqCommits(behr_paths.psm_dir, '223e1e1');
+            G.addReqCommits(behr_paths.python_interface, 'dcd79fc');
+            G.addReqCommits(behr_paths.utils, '51a0869'); % new floodfill()
+            G.addReqCommits(behr_paths.wrf_utils, '9272d08'); % need upgraded find_wrf_tropopause
+            G.Strict = true;
+            G.checkState();
+            
+            save_dir = misc_behr_update_plots.behr_v3B_var_trop_dir;
+            misc_behr_update_plots.make_behr_with_parameters('8ed138f', 'eb1f53e', save_dir, do_overwrite, true);
+        end
+        
+
         function make_behr_v3B_daily_fix(do_overwrite)
             if ~exist('do_overwrite', 'var')
                 do_overwrite = false;
