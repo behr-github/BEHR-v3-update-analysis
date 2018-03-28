@@ -71,7 +71,7 @@ classdef misc_behr_update_plots
             G.checkState();
             
             save_dir = misc_behr_update_plots.behr_v3B_daily_fix_dir;
-            misc_behr_update_plots.make_behr_with_parameters('8a87a07', 'a426124', save_dir, do_overwrite, true);
+            misc_behr_update_plots.make_behr_with_parameters('8a87a07', 'a426124', save_dir, do_overwrite, true, 'read_main_handle', @read_main);
         end
         
         function make_behr_final(do_overwrite)
@@ -880,7 +880,7 @@ classdef misc_behr_update_plots
         % Helper functions for the production of the actual incr. changes %
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         
-        function make_behr_with_parameters(req_commit, req_utils_commit, root_save_dir, do_overwrite, has_daily_profs, alt_sp_dir)
+        function make_behr_with_parameters(req_commit, req_utils_commit, root_save_dir, do_overwrite, has_daily_profs, varargin)
             % Runs BEHR, saving files in ROOT_SAVE_DIR and overwriting
             % according to DO_OVERWRITE. This runs BEHR assuming the
             % BEHR_main and read_omno2_v_aug2012 functions take all the
@@ -890,6 +890,17 @@ classdef misc_behr_update_plots
             % then it will assume it does not need to produce the SP files
             % and that they can be found in ALT_SP_DIR.
             E = JLLErrors;
+
+            p = inputParser;
+            p.addParameter('alt_sp_dir','');
+            p.addParameter('read_main_handle', @read_omno2_v_aug2012);
+
+            p.parse(varargin{:});
+            pout = p.Results;
+
+            alt_sp_dir = '';
+            read_main_handle = pout.read_main_handle;
+
             my_dir = fileparts(mfilename('fullpath'));
             behr_dir = behr_paths.behr_core;
             behr_utils = behr_paths.behr_utils;
@@ -910,7 +921,7 @@ classdef misc_behr_update_plots
                 mkdir(sp_save_dir);
             end
             
-            if ~exist('alt_sp_dir', 'var')
+            if isempty(alt_sp_dir)
                 do_sp = true;
                 alt_sp_dir = sp_save_dir;
             else
@@ -923,7 +934,7 @@ classdef misc_behr_update_plots
             end
             
             if do_sp
-                read_omno2_v_aug2012('start', misc_behr_update_plots.start_date,...
+                read_main_handle('start', misc_behr_update_plots.start_date,...
                     'end', misc_behr_update_plots.end_date,...
                     'sp_mat_dir', sp_save_dir, 'overwrite', do_overwrite);
             else
