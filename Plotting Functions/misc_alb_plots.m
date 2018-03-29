@@ -9,6 +9,8 @@ classdef misc_alb_plots
         brdf_flip_dir = '/Volumes/share-sat/SAT/BEHR/AlbedoTestBRDF/BRDF_tomradRAA';
         workspace_dir = fullfile(behr_repo_dir, 'Workspaces', 'BRDF Albedo');
         
+        mcd43c1_dir = '/Volumes/share-sat/SAT/MODIS/MCD43C1';
+        mcd43c3_dir = '/Volumes/share-sat/SAT/MODIS/MCD43C3/v006';
         scia_modis_dir = '/Users/Josh/Documents/Fortran/Sciatran/Utils/LUTGen/Tests/modis';
     end
     
@@ -257,7 +259,7 @@ classdef misc_alb_plots
             end
             
             % Get the site output files
-            aerosol_subdir = sprintf('aerosols_%s_mcd43d', aerosol_type);
+            aerosol_subdir = sprintf('aerosols_%s_mcd43d_more_szas', aerosol_type);
             locs_info = ncinfo(fullfile(misc_alb_plots.scia_modis_dir, 'loc_coeffs_D_new.nc'));
             loc_names = cellstr(ncread(locs_info.Filename, 'ShortName'));
             loc_coeffs = ncread(locs_info.Filename, 'ModisCoefficients');
@@ -322,16 +324,173 @@ classdef misc_alb_plots
             xlabel('BRDF');
             ylabel('LER');
             set(gca,'fontsize',16);
+            xylims();
             plot_fit_line(gca,[],'regression','rma');
             f1.Children(1).Location = 'northwest';
             
-            perdel = reldiff(modis_lers(:), modis_albs(:), 'avg')*100;
+            f4 = figure;
+            scatter(modis_albs(:)/pi, modis_lers(:), [], color_vals(:));
+            if ~strcmpi(colorby, 'None')
+                cb = colorbar;
+                cb.Label.String = colorby;
+            end
+            xlabel('BRF');
+            ylabel('LER');
+            set(gca,'fontsize',16);
+            xylims();
+            plot_fit_line(gca,[],'regression','rma');
+            f1.Children(1).Location = 'northwest';
+            
+            perdel = reldiff(modis_lers(:), modis_albs(:))*100;
             f2 = figure; boxplot(perdel);
             ylabel('%\Delta: LER - BRDF albedo');
             set(gca,'xtick',[],'fontsize',16, 'ygrid','on');
+            
+            del = modis_lers(:) - modis_albs(:);
+            f3 = figure; boxplot(del);
+            ylabel('LER - BRDF albedo');
+            set(gca,'xtick',[],'fontsize',16, 'ygrid','on');
+            
             if nargout > 0
-                varargout = {f1, f2};
+                varargout = {f1, f2, f3, f4};
             end
+        end
+        
+        function test_black_sky_integration(DEBUG_LEVEL)
+            % I'm curious how the BRDF can be greater than the black sky
+            % albedo, it seems like since the black sky albedo is the BRDF
+            % integrated over all viewing angles, then the albedo should be
+            % greater. On the other hand, in the definition in Lucht et al.
+            % 2000 (IEEE Trans. Geosci. Rem. Sense., p 977), the albedo is
+            % the integral over viewing directions divided by pi, so
+            % perhaps that factor is what makes the difference.
+
+            if ~exist('DEBUG_LEVEL', 'var')
+                DEBUG_LEVEL = 1;
+            end
+            
+            % Get the site output files
+            aerosol_subdir = 'aerosols_continental_mcd43d_more_szas';
+            locs_info = ncinfo(fullfile(misc_alb_plots.scia_modis_dir, 'loc_coeffs_D_new.nc'));
+            loc_names = cellstr(ncread(locs_info.Filename, 'ShortName'));
+            loc_coeffs = ncread(locs_info.Filename, 'ModisCoefficients');
+            loc_coeffs = squeeze(loc_coeffs(:,3,:,:)); % always use band 3
+            loc_months = double(ncread(locs_info.Filename, 'Months'));
+            
+            i_month = 12; % month, later should vary this
+            i_site = 2; % start with atlanta, vary this later
+            
+            this_coeffs = loc_coeffs(:,i_month,i_site);
+            loc_file = ncinfo(fullfile(misc_alb_plots.scia_modis_dir, aerosol_subdir, sprintf('%s-LER.nc', loc_names{i_site})));
+            
+            sza_vec = ncread(loc_file.Filename, 'sza');
+            vza_vec = ncread(loc_file.Filename, 'vza');
+            raa_vec = 180 - ncread(loc_file.Filename, 'raa'); % SCIATRAN RAA definition is backwards from MODIS
+            black_sky = nan(size(sza_vec));
+            black_sky_2 = nan(size(sza_vec));
+            for a=1:numel(sza_vec)
+                [vzas, raas] = meshgrid(vza_vec, raa_vec);
+                modis_albs = modis_brdf_alb(this_coeffs(1), this_coeffs(2), this_coeffs(3), sza_vec(a), vzas, raas);
+                black_sky(a) = integrate_black_sky(this_coeffs, sza_vec(a));
+                black_sky_2(a) = integrate_black_sky_roman(this_coeffs, sza_vec(a));
+                
+                figure; 
+                contour(vzas, raas, modis_albs,'fill','on');
+                hold on
+                [c_matrix, c_handle] = contour(vzas, raas, modis_albs, [black_sky(a), black_sky(a)], 'color','k', 'linewidth', 2, 'linestyle', '--');
+                clabel(c_matrix, c_handle);
+                xlabel('Viewing zenith angle');
+                ylabel('Relative azimuth angle');
+                cb = colorbar;
+                cb.Label.String = 'BRDF reflectance';
+                title(sprintf('SZA = %g', sza_vec(a)));
+            end
+            
+            figure;
+            plot(sza_vec, black_sky, 'ko');
+            hold on
+            plot(sza_vec, black_sky_2, 'bx');
+            legend('Black sky alb', 'BSA, alt calc.');
+            xlabel('Solar zenith angle');
+            ylabel('Albedo');
+        end
+        
+        function compare_c1integral_c3(DEBUG_LEVEL)
+            % Compute the integrate of the MCD43C1 BRDF product against the
+            % MCD43C3 black sky albedo product. In theory, these should be
+            % similar/the same, since according to
+            % https://www.umb.edu/spectralmass/terra_aqua_modis/v006/mcd43c3,
+            % the C3 product is calcuated from the C1 product. The reason I
+            % care is that I found that definitions of black-sky albedo may
+            % or may not include a factor of 1/pi in the integral over all
+            % viewing directions. Since that factor is what makes the BSA <
+            % BRDF in summer, it matters whether it is in the MODIS BSA
+            % product.
+            
+            
+            
+            test_date = ask_date('Enter the date to test (2012-06-01 to 2012-06-08)');
+            % Load the MODIS C1 BRDF coefficients and black sky albedo for
+            % one day over the US
+            year_str = datestr(test_date, 'yyyy');
+            modis_day = modis_date_to_day(test_date);
+            c1_file = dirff(fullfile(misc_alb_plots.mcd43c1_dir, year_str, sprintf('MCD43C1.A%s%03d*.hdf', year_str, modis_day)));
+            c1_info = hdfinfo(c1_file(1).name);
+            
+            c3_file = dirff(fullfile(misc_alb_plots.mcd43c3_dir, year_str, sprintf('MCD43C3.A%s%03d*.hdf', year_str, modis_day)));
+            c3_info = hdfinfo(c3_file(1).name);
+            
+            
+            [modis_lon, modis_lat, modis_xx, modis_yy] = modis_cmg_latlon(0.05, [-125 -65], [25 50], 'grid');
+            
+            for a=1:3
+                c1_coeffs(:,:,a) = hdfreadmodis(c1_info.Filename, hdfdsetname(c1_info, 1, 1, sprintf('BRDF_Albedo_Parameter%d_Band3',a)));
+            end
+            c1_coeffs = c1_coeffs(modis_yy, modis_xx, :);
+            c1_coeffs = permute(c1_coeffs, [3 1 2]);
+            
+            c3_bsa = hdfreadmodis(c3_info.Filename, hdfdsetname(c3_info, 1, 1, 'Albedo_BSA_Band3'));
+            c3_bsa = c3_bsa(modis_yy, modis_xx);
+            
+            % Calculate the integrals from the C1 BRDF
+            c1_integrated_bsa = nan(size(c3_bsa));
+            for a=1:numel(c3_bsa)
+                if mod(a,1000) == 1
+                    fprintf('Integral %d of %d\n', a, numel(c3_bsa));
+                end
+                
+                if all(~isnan(c1_coeffs(:,a)))
+                    % p. 29 of the MOD43 theoretical basis document
+                    % indicated that the MCD43C3 BSA is for SZA = 45 deg
+                    sza = solar_zenith_from_time(test_date, modis_lon(a), modis_lat(a), 'noon');
+                    c1_integrated_bsa(a) = integrate_black_sky(c1_coeffs(:,a), sza);
+                end
+            end
+            
+            figure;
+            pcolor(modis_lon, modis_lat, c3_bsa);
+            shading flat
+            colorbar;
+            state_outlines('k');
+            title(sprintf('MCD43C3 BSA %s', datestr(test_date)));
+            
+            
+            figure;
+            pcolor(modis_lon, modis_lat, c1_integrated_bsa);
+            shading flat
+            colorbar;
+            state_outlines('k');
+            title(sprintf('MCD43C1 integrated %s', datestr(test_date)));
+            
+            bsa_del = c3_bsa - c1_integrated_bsa;
+            figure;
+            pcolor(modis_lon, modis_lat, bsa_del);
+            shading flat
+            colorbar;
+            colormap(blue_red_cmap);
+            caxis(calc_plot_limits(bsa_del(:), 'difference'));
+            state_outlines('k');
+            title(sprintf('MCD43C3 BSA - MCD43C1 integrated %s', datestr(test_date)));
         end
     end
     
@@ -368,3 +527,59 @@ avg_value = sum_value ./ sum_weight;
 
 end
 
+function bs_alb = integrate_black_sky(modis_coeffs, sza)
+v_vec = linspace(0,pi/2,90);
+r_vec = linspace(0,2*pi,360);
+[vzas, raas] = meshgrid(v_vec, r_vec);
+
+K = cell(1,3);
+K{1} = ones(size(vzas));
+[K{2}, K{3}] = modis_brdf_kernels(sza, vzas*180/pi, raas*180/pi);
+
+h_k = nan(size(K));
+for a=1:numel(K)
+    vza_integral = trapz(vzas(1,:), K{a}.*sin(vzas).*cos(vzas), 2);
+    h_k(a) = trapz(raas(:,1), vza_integral) / pi;
+end
+
+bs_alb = sum(modis_coeffs .* h_k');
+end
+
+function bs_alb = integrate_black_sky_alt(modis_coeffs, sza)
+% This was a check that whether I added up the three parameters first and
+% then integrated or integrated each parameter separately I got the same
+% answer. I did, at least for Atlanta in June.
+v_vec = linspace(0,pi/2,90);
+r_vec = linspace(0,2*pi,360);
+[vzas, raas] = meshgrid(v_vec, r_vec);
+
+K = modis_brdf_alb(modis_coeffs(1), modis_coeffs(2), modis_coeffs(3), repmat(sza,size(vzas)), vzas*180/pi, raas*180/pi);
+vza_integral = trapz(vzas(1,:), K .* sin(vzas) .* cos(vzas), 2);
+bs_alb = 1/pi .* trapz(raas(:,1), vza_integral);
+end
+
+function bs_alb = integrate_black_sky_roman(modis_coeffs, sza)
+% Roman et al. (Rem. Sense. Environ. 114 p. 738) also defines black sky
+% albedo in Eq. 54a. However, there's some differences at first glance:
+%   1) Their R is the BRF, not the BRDF. But, they define the BRDF in Eq.
+%   41 the same way as the MOD43 TBD does the BRDF, so I think there's a
+%   terminology issue - I think the MODIS BRDF may actually be a BRF.
+%
+%   2) They appear to be missing a factor a sin(vza), but that is taken up
+%   in the change of variables from integrating over vza to over cos(vza).
+v_vec = linspace(0,pi/2,90);
+r_vec = linspace(0,2*pi,360);
+[vzas, raas] = meshgrid(v_vec, r_vec);
+
+K = modis_brdf_alb(modis_coeffs(1), modis_coeffs(2), modis_coeffs(3), repmat(sza,size(vzas)), vzas*180/pi, raas*180/pi);
+% The change of variable from vza ( = \theta_v) to cos(vza) = \mu changes
+% the differential:
+%   d\mu = (\partial \mu / \partial \theta_v) * d\theta_v
+%        = (\partial cos(\theta_v) / \partial \theta_v) * d\theta_v
+%        = -sin(theta_v) * d\theta_v
+% The integration limits are also flipped (they integrate from cos(pi/2) =
+% 0 to cos(0) = 1 instead of 0 to pi/2) which is where the negative sign
+% goes.
+vza_integral = trapz(cos(fliplr(vzas(1,:))), fliplr(K .* cos(vzas)), 2);
+bs_alb = 1/pi .* trapz(raas(:,1), vza_integral);
+end

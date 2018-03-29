@@ -14,15 +14,19 @@ classdef misc_behr_update_plots
         behr_nasa_brdf_vis_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/3-NewVis';
         behr_nasa_brdfD_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/2b-BRDF-D';
         behr_nasa_brdf_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/2-BRDF';
+        behr_modisv6_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/1b-MODISv6';
         behr_nasa_only_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/1-NASAv3';
         behr_v2_1C_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/0-v2.1C';
         
         bc_test_root = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/BC-Tests';
+        surf_refl_root = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/Surf-Refl';
+        wrf_root = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/WRF';
         
         wrf_path_v2 = '/Volumes/share-sat/SAT/BEHR/Monthly_NO2_Profiles';
         
         figs_root_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Figures';
         modis_truecol_dir = '/Volumes/share-sat/SAT/MODIS/MYD09/Winter2012/';
+        modis_landcover_file = '/Volumes/share-sat/SAT/MODIS/MCD12C1/MCD12C1.A2012001.051.2013178154403.hdf';
     end
     
     methods(Static = true)
@@ -232,6 +236,78 @@ classdef misc_behr_update_plots
                 'overwrite', do_overwrite);
         end
         
+        function average_geometry()
+            dvec = datenum('2012-06-01'):datenum('2012-08-31');
+            USGrid = GlobeGrid(0.05, 'domain', 'us');
+            blank_mat = nan(size(USGrid.GridLon));
+            Geometry = struct('SolarZenithAngle', blank_mat,...
+                'ViewingZenithAngle', blank_mat,...
+                'RelativeAzimuthAngle', blank_mat);
+            areaweight = blank_mat;
+            
+            fns = fieldnames(Geometry);
+            
+            for d=1:numel(dvec)
+                fprintf('Loading %s\n', datestr(dvec(d)));
+                Data = load_behr_file(dvec(d), 'monthly', 'us');
+                for a=1:numel(Data)
+                    for f=1:numel(fns)
+                        [this_val, this_weight] = cvm_generic_wrapper(Data(a).FoV75CornerLongitude, Data(a).FoV75CornerLatitude, Data(a).(fns{f}), USGrid);
+                        if f==1
+                            areaweight = nansum2(cat(3, areaweight, this_weight),3);
+                        end
+                        Geometry.(fns{f}) = nansum2(cat(3, Geometry.(fns{f}), this_val .* this_weight),3);
+                    end
+                end
+            end
+            
+            for f=1:numel(fns)
+                Geometry.(fns{f}) = Geometry.(fns{f}) ./ areaweight;
+            end
+            
+            save(fullfile(misc_behr_update_plots.surf_refl_root, 'SummerGeometry.mat'), 'Geometry')
+        end
+        
+        function average_brdf_coeffs()
+            dvec = datenum('2012-06-01'):datenum('2012-08-31');
+            for d=1:numel(dvec)
+                fprintf('Reading %s\n', datestr(dvec(d)));
+                b3data = read_modis_albedo(behr_paths.mcd43d_dir, dvec(d), [-125 -65], [25 50], 'DEBUG_LEVEL', 0);
+                if d==1
+                    f_iso = nan(size(b3data.iso));
+                    f_iso_count = zeros(size(f_iso));
+                    f_vol = nan(size(b3data.vol));
+                    f_vol_count = zeros(size(f_vol));
+                    f_geo = nan(size(b3data.geo));
+                    f_geo_count = zeros(size(f_geo));
+                    lon = b3data.lons;
+                    lat = b3data.lats;
+                end
+                
+                % Typically in BEHR I use albedo with quality better than
+                % (<=) 3. So here we do not average coefficients with lower
+                % (>) quality than 3. The lower the quality flag, the
+                % better the quality.
+                b3data.iso(b3data.quality > 3) = nan;
+                b3data.vol(b3data.quality > 3) = nan;
+                b3data.geo(b3data.quality > 3) = nan;
+                
+                f_iso = nansum2(cat(3, f_iso, b3data.iso),3);
+                f_iso_count = f_iso_count + ~isnan(b3data.iso);
+                f_vol = nansum2(cat(3, f_vol, b3data.vol),3);
+                f_vol_count = f_vol_count + ~isnan(b3data.vol);
+                f_geo = nansum2(cat(3, f_geo, b3data.geo),3);
+                f_geo_count = f_geo_count + ~isnan(b3data.geo);
+            end
+            
+            f_iso = f_iso ./ f_iso_count;
+            f_vol = f_vol ./ f_vol_count;
+            f_geo = f_geo ./ f_geo_count;
+            
+            fprintf('Saving...\n')
+            save(fullfile(misc_behr_update_plots.surf_refl_root, 'SummerMODISCoefficients.mat'), '-v7.3', 'f_iso', 'f_vol', 'f_geo', 'lon', 'lat');
+        end
+        
         %%%%%%%%%%%%%%%%%%%%
         % Analysis methods %
         %%%%%%%%%%%%%%%%%%%%
@@ -283,6 +359,7 @@ classdef misc_behr_update_plots
             average_info = cat(1,...
                 struct('dir', misc_behr_update_plots.behr_v2_1C_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
                 struct('dir', misc_behr_update_plots.behr_nasa_only_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
+                struct('dir', misc_behr_update_plots.behr_modisv6_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','MODISAlbedo'}}),...
                 struct('dir', misc_behr_update_plots.behr_nasa_brdfD_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'MODISAlbedo'}}),...
                 struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly'}}),...
                 struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_profs_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','BEHRAMFTrop','BEHRAMFTropVisOnly'}}),...
@@ -761,10 +838,67 @@ classdef misc_behr_update_plots
             legend(l, {'Minimum SZA','Maximum SZA'});
         end
         
-        function plot_no2_vs_cloudfrac()
-            fxn_start_date = ask_date('Give the starting date');
-            fxn_end_date = ask_date('Give the ending date');
-            as_shape_factor = ask_yn('Calculate shape factor?');
+        function [prof_fig, prof_med_fig, freq_fig, fig_mean_bin, fig_med_bin, fig_map] = plot_no2_vs_cloudfrac(fxn_start_date, fxn_end_date, as_shape_factor, region, DEBUG_LEVEL)
+            if ~exist('fxn_start_date', 'var')
+                fxn_start_date = ask_date('Give the starting date');
+            else
+                validate_date(fxn_start_date);
+            end
+            if ~exist('fxn_end_date', 'var')
+                fxn_end_date = ask_date('Give the ending date');
+            else
+                validate_date(fxn_end_date);
+            end
+            if ~exist('as_shape_factor', 'var')
+                as_shape_factor = ask_yn('Calculate shape factor?');
+            elseif ~isscalar(as_shape_factor) || ~islogical(as_shape_factor)
+                E.badinput('AS_SHAPE_FACTOR must be a scalar logical');
+            end
+            
+            allowed_regions = {'SE','NW'};
+            if ~exist('region', 'var')
+                region = ask_multichoice('Which region to restrict to?', allowed_regions, 'list', true);
+            elseif ~ischar(region) || ~ismember(region, allowed_regions)
+                E.badinput('REGION must be one of the strings: %s', strjoin(allowed_regions, ', '));
+            end
+            
+            if ~exist('DEBUG_LEVEL', 'var')
+                DEBUG_LEVEL = 2;
+            end
+            
+            lims.SE.lon = [-100 -75];
+            lims.SE.lat = [25 37.5];
+            lims.SE.color = 'b'; % color just used when plotting the regions
+            lims.NW.lon = [-125 -100];
+            lims.NW.lat = [37.5 50];
+            lims.NW.color = 'r';
+            
+            try
+                lonlim = lims.(region).lon;
+                latlim = lims.(region).lat;
+            catch err
+                if strcmpi(err.identifier, 'MATLAB:nonExistentField')
+                    E.notimplemented('Region %s has no lat/lon limits defined', region);
+                else
+                    rethrow(err)
+                end
+            end
+            
+            % Make a quick plot of the regions
+            fig_map = figure;
+            coasts = load('coast');
+            state_outlines('k','not','ak','hi');
+            line(coasts.long, coasts.lat, 'color', 'k');
+            def_regions = fieldnames(lims);
+            for a=1:numel(def_regions)
+                x_all = lims.(def_regions{a}).lon([1 1 2 2 1]);
+                y_all = lims.(def_regions{a}).lat([1 2 2 1 1]);
+                line(x_all, y_all, 'color', lims.(def_regions{a}).color, 'linewidth', 2);
+                text(mean(x_all), mean(y_all), def_regions{a}, 'FontSize', 18, 'BackgroundColor', [0.8 0.8 0.8]);
+            end
+            
+            xlim([-130 -65]); ylim([22.5 52.5]);
+            set(gca,'fontsize',14);
             
             omi_cloudfrac = [];
             all_pres_levs = [];
@@ -773,6 +907,14 @@ classdef misc_behr_update_plots
             
             dvec = datenum(fxn_start_date):datenum(fxn_end_date);
             for d=1:numel(dvec)
+                if DEBUG_LEVEL > 1
+                    fprintf('Loading %s\n', datestr(dvec(d)));
+                elseif DEBUG_LEVEL > 0
+                    % Using this means we cannot have any other print
+                    % statements in this loop
+                    text_progress_bar(d, numel(dvec));
+                end
+                
                 D = load(fullfile(misc_behr_update_plots.behr_final_dir, 'DailyProfs', behr_filename(dvec(d), 'daily', 'us')),'Data');
                 DataDaily = D.Data;
                 
@@ -784,18 +926,21 @@ classdef misc_behr_update_plots
                     % affect the OMI cloud fraction. Cloud fraction and row
                     % anomaly should be the same between daily and monthly
                     % files.
-                    xx = DataDaily(a).XTrackQualityFlags == 0;
+                    xx = DataDaily(a).XTrackQualityFlags == 0 & DataDaily(a).Longitude > lonlim(1) & DataDaily(a).Longitude < lonlim(2) & DataDaily(a).Latitude > latlim(1) & DataDaily(a).Latitude < latlim(2);
+                    if sum(xx(:)) == 0
+                        continue
+                    end
                     omi_cloudfrac = cat(1, omi_cloudfrac, DataDaily(a).CloudFraction(xx));
                     
                     % Get daily NO2
                     no2_profs = DataDaily(a).BEHRNO2apriori(:,xx);
                     pres_levs = DataDaily(a).BEHRPressureLevels(:,xx);
                     if as_shape_factor
-                       vcds = integrate_published_behr_apriori(DataDaily(a));
-                       vcds = vcds(xx);
-                       for b=1:size(no2_profs,2)
-                           no2_profs(:,b) = no2_profs(:,b) ./ vcds(b) * 1e14; %scale by 1e14 just to make the numbers not so crazy small
-                       end
+                        vcds = integrate_published_behr_apriori(DataDaily(a));
+                        vcds = vcds(xx);
+                        for b=1:size(no2_profs,2)
+                            no2_profs(:,b) = no2_profs(:,b) ./ vcds(b) * 1e14; %scale by 1e14 just to make the numbers not so crazy small
+                        end
                     end
                     behr_no2_daily = cat(2, behr_no2_daily, no2_profs);
                     all_pres_levs = cat(2, all_pres_levs, pres_levs);
@@ -803,17 +948,18 @@ classdef misc_behr_update_plots
                     % Now monthly
                     no2_profs_m = DataMonthly(a).BEHRNO2apriori(:,xx);
                     if as_shape_factor
-                       vcds_m = integrate_published_behr_apriori(DataMonthly(a));
-                       vcds_m = vcds_m(xx);
-                       for b=1:size(no2_profs_m,2)
-                           no2_profs_m(:,b) = no2_profs_m(:,b) ./ vcds_m(b) * 1e14; %scale by 1e14 just to make the numbers not so crazy small
-                       end
+                        vcds_m = integrate_published_behr_apriori(DataMonthly(a));
+                        vcds_m = vcds_m(xx);
+                        for b=1:size(no2_profs_m,2)
+                            no2_profs_m(:,b) = no2_profs_m(:,b) ./ vcds_m(b) * 1e14; %scale by 1e14 just to make the numbers not so crazy small
+                        end
                     end
                     behr_no2_monthly = cat(2, behr_no2_monthly, no2_profs_m);
                 end
             end
             
-            cc = omi_cloudfrac <= 0.2;
+            cc20 = omi_cloudfrac <= 0.2;
+            cc_all = true(size(omi_cloudfrac));
             
             % Average profiles with standard deviations
             behr_no2_monthly_interp = nan(numel(behr_pres_levels()), size(behr_no2_monthly,2));
@@ -827,18 +973,60 @@ classdef misc_behr_update_plots
                 behr_no2_daily_interp(:,a) = naninterp1(all_pres_levs(:,a), behr_no2_daily(:,a), behr_pres_levels());
             end
             
-            avg_no2_monthly = nanmean(behr_no2_monthly_interp(:,cc),2);
-            avg_no2_daily = nanmean(behr_no2_daily_interp(:,cc),2);
-            l=gobjects(2,1);
-            figure;
-            l(1)=line(avg_no2_monthly, behr_pres_levels(), 'color', 'b', 'linewidth', 2, 'marker', '^');
-            scatter_errorbars(avg_no2_monthly, behr_pres_levels(), nanstd(behr_no2_monthly_interp(:,cc),0,2), 'color', 'b','direction','x');
-            l(2)=line(avg_no2_daily, behr_pres_levels(), 'color', 'r', 'linewidth', 2, 'marker', 'o');
-            scatter_errorbars(avg_no2_daily, behr_pres_levels(), nanstd(behr_no2_daily_interp(:,cc),0,2), 'color', 'r','direction','x');
-            legend(l, {'Monthly profiles', 'Daily profiles'});
+            if ~as_shape_factor
+                x_str = '%s [NO_2] (mixing ratio)';
+            else
+                x_str = '%s NO_2 shape factor';
+            end
             
-            % Scatter plots of concentration or shape factor vs. cloud
-            % fraction
+            avg_no2_monthly = nanmean(behr_no2_monthly_interp(:,cc20),2);
+            avg_no2_monthly_all = nanmean(behr_no2_monthly_interp(:,cc_all),2);
+            avg_no2_daily = nanmean(behr_no2_daily_interp(:,cc20),2);
+            avg_no2_daily_all = nanmean(behr_no2_daily_interp(:,cc_all),2);
+            
+            l=gobjects(4,1);
+            prof_fig = figure;
+            l(1)=line(avg_no2_monthly, behr_pres_levels(), 'color', 'b', 'linewidth', 2, 'marker', '^');
+            scatter_errorbars(avg_no2_monthly, behr_pres_levels(), nanstd(behr_no2_monthly_interp(:,cc20),0,2), 'color', 'b','direction','x');
+            l(2)=line(avg_no2_daily, behr_pres_levels(), 'color', 'r', 'linewidth', 2, 'marker', 'o');
+            scatter_errorbars(avg_no2_daily, behr_pres_levels(), nanstd(behr_no2_daily_interp(:,cc20),0,2), 'color', 'r','direction','x');
+            l(3)=line(avg_no2_monthly_all, behr_pres_levels(), 'color', [1 0 1], 'linewidth', 2, 'marker', 'v');
+            scatter_errorbars(avg_no2_monthly_all, behr_pres_levels(), nanstd(behr_no2_monthly_interp(:,cc_all),0,2), 'color', [1 0 1], 'direction','x');
+            l(4)=line(avg_no2_daily_all, behr_pres_levels(), 'color', [1 0.5 0], 'linewidth', 2, 'marker', 's');
+            scatter_errorbars(avg_no2_daily_all, behr_pres_levels(), nanstd(behr_no2_daily_interp(:,cc_all),0,2), 'color', [1 0.5 0], 'direction','x');
+            legend(l, {'Monthly CF < 20%', 'Daily CF < 20%', 'Monthly All CF', 'Daily All CF'});
+            set(gca,'fontsize',14,'ydir','reverse');
+            xlabel(sprintf(x_str,'Mean'));
+            ylabel('Pressure (hPa)');
+            title(region);
+            
+            med_no2_monthly = nanmedian(behr_no2_monthly_interp(:,cc20),2);
+            quart_no2_monthly = quantile(behr_no2_monthly_interp(:,cc20), [0.25, 0.75],2);
+            med_no2_daily = nanmedian(behr_no2_daily_interp(:,cc20),2);
+            quart_no2_daily = quantile(behr_no2_daily_interp(:,cc20),[0.25,0.75],2);
+            med_no2_monthly_all = nanmedian(behr_no2_monthly_interp(:,cc_all),2);
+            quart_no2_monthly_all = quantile(behr_no2_monthly_interp(:,cc_all), [0.25, 0.75],2);
+            med_no2_daily_all = nanmedian(behr_no2_daily_interp(:,cc_all),2);
+            quart_no2_daily_all = quantile(behr_no2_daily_interp(:,cc_all),[0.25,0.75],2);
+            
+            l=gobjects(2,1);
+            prof_med_fig = figure;
+            l(1) = line(med_no2_monthly, behr_pres_levels(), 'color','b','linewidth',2,'marker','^');
+            scatter_errorbars(med_no2_monthly, behr_pres_levels()-2, quart_no2_monthly(:,1), quart_no2_monthly(:,2), 'color','b','direction','x');
+            l(2) = line(med_no2_daily, behr_pres_levels(), 'color', 'r', 'linewidth',2,'marker','o');
+            scatter_errorbars(med_no2_daily, behr_pres_levels()+2, quart_no2_daily(:,1), quart_no2_daily(:,2), 'color', 'r', 'direction', 'x');
+            l(3) = line(med_no2_monthly_all, behr_pres_levels(), 'color',[1 0 1],'linewidth',2,'marker','^');
+            scatter_errorbars(med_no2_monthly_all, behr_pres_levels()-2, quart_no2_monthly_all(:,1), quart_no2_monthly_all(:,2), 'color',[1 0 1],'direction','x');
+            l(4) = line(med_no2_daily_all, behr_pres_levels(), 'color', [1 0.5 0], 'linewidth',2,'marker','o');
+            scatter_errorbars(med_no2_daily_all, behr_pres_levels()+2, quart_no2_daily_all(:,1), quart_no2_daily_all(:,2), 'color', [1 0.5 0], 'direction', 'x');
+            legend(l, {'Monthly CF < 20%', 'Daily CF < 20%', 'Monthly All CF', 'Daily All CF'});
+            set(gca,'fontsize',14,'ydir','reverse');
+            xlabel(sprintf(x_str,'Median'));
+            ylabel('Pressure (hPa)');
+            title(region);
+            
+            % Frequency distribution plots of concentration or shape factor
+            % for pixels with cloud fraction < 0.2
             
             pp = all_pres_levs > 400;
             behr_no2_monthly(pp) = nan;
@@ -846,35 +1034,354 @@ classdef misc_behr_update_plots
             behr_no2_daily(pp) = nan;
             ut_no2_daily = squeeze(nanmean(behr_no2_daily,1));
             
-            figure;
-            scatter(omi_cloudfrac, ut_no2_monthly);
-            xlabel('OMI Cloud Fraction');
-            ylabel('Monthly a priori NO_2 \leq 400 hPa');
             
-            figure; 
-            scatter(omi_cloudfrac, ut_no2_daily);
-            xlabel('OMI Cloud Fraction');
-            ylabel('Daily a priori NO_2 \leq 400 hPa');
-            
-            % Frequency distribution plots of concentration or shape factor
-            % for pixels with cloud fraction < 0.2
             bin_edges = 0:1e-12:1e-9;
             if ~as_shape_factor
                 x_str = '[NO_2] (mixing ratio, above 400 hPa)';
             else
                 x_str = 'NO_2 shape factor (above 400 hPa)';
             end
-            counts_monthly = histc(ut_no2_monthly(cc), bin_edges);
-            counts_daily = histc(ut_no2_daily(cc), bin_edges);
-            figure; 
+            counts_monthly = histc(ut_no2_monthly(cc20), bin_edges);
+            counts_monthly_all = histc(ut_no2_monthly(cc_all), bin_edges);
+            counts_daily = histc(ut_no2_daily(cc20), bin_edges);
+            counts_daily_all = histc(ut_no2_daily(cc_all), bin_edges);
+            
+            freq_fig = figure;
             line(bin_edges, counts_monthly, 'color', 'b', 'linewidth', 2);
             line(bin_edges, counts_daily, 'color', 'r', 'linewidth', 2);
-            legend('Monthly profiles', 'Daily Profiles');
+            line(bin_edges, counts_monthly_all, 'color', [1 0 1], 'linewidth', 2);
+            line(bin_edges, counts_daily_all, 'color', [1 0.5 0], 'linewidth', 2);
+            legend('Monthly CF < 20%', 'Daily CF < 20%', 'Monthly All CF', 'Daily All CF');
             xlabel(x_str);
-            ylabel('Counts per 0.1 pptv');
+            ylabel('Counts');
+            title(region)
+            set(gca,'fontsize',14);
             
+            % Mean and median UT NO2 binned by cloud fraction
+            [binned_ut_no2_monthly, bin_centers] = bin_data(omi_cloudfrac, ut_no2_monthly, 0:0.05:1);
+            binned_ut_no2_daily = bin_data(omi_cloudfrac, ut_no2_daily, 0:0.05:1);
+            
+            mean_ut_no2_monthly = cellfun(@nanmean,binned_ut_no2_monthly);
+            std_ut_no2_monthly = cellfun(@nanstd, binned_ut_no2_monthly);
+            mean_ut_no2_daily = cellfun(@nanmean, binned_ut_no2_daily);
+            std_ut_no2_daily = cellfun(@nanstd, binned_ut_no2_daily);
+            
+            l = gobjects(2,1);
+            fig_mean_bin = figure;
+            offset = 0.01;
+            l(1)=plot(bin_centers-offset, mean_ut_no2_monthly, 'bo');
+            scatter_errorbars(bin_centers-offset, mean_ut_no2_monthly, std_ut_no2_monthly, 'color','b');
+            hold on
+            l(2)=plot(bin_centers+offset, mean_ut_no2_daily, 'r^');
+            scatter_errorbars(bin_centers+offset, mean_ut_no2_daily, std_ut_no2_daily, 'color', 'r');
+            xlabel('OMI Cloud Fration'); ylabel('Mean UT NO_2'); title(region)
+            legend(l, {'Monthly','Daily'});
+            
+            med_ut_no2_monthly = cellfun(@nanmedian, binned_ut_no2_monthly);
+            quart_ut_no2_monthly = cellfun(@(x) quantile(x, [0.25 0.75]), binned_ut_no2_monthly, 'uniformoutput', false);
+            quart_ut_no2_monthly = cat(1, quart_ut_no2_monthly{:});
+            med_ut_no2_daily = cellfun(@nanmedian, binned_ut_no2_daily);
+            quart_ut_no2_daily = cellfun(@(x) quantile(x, [0.25 0.75]), binned_ut_no2_daily, 'uniformoutput', false);
+            quart_ut_no2_daily = cat(1, quart_ut_no2_daily{:});
+            
+            l = gobjects(2,1);
+            fig_med_bin = figure;
+            l(1)=plot(bin_centers-offset, med_ut_no2_monthly, 'bo');
+            scatter_errorbars(bin_centers-offset, med_ut_no2_monthly, quart_ut_no2_monthly(:,1), quart_ut_no2_monthly(:,2), 'color', 'b');
+            hold on
+            l(2)=plot(bin_centers+offset, med_ut_no2_daily, 'r^');
+            scatter_errorbars(bin_centers+offset, med_ut_no2_daily, quart_ut_no2_daily(:,1), quart_ut_no2_daily(:,2), 'color', 'r');
+            xlabel('OMI Cloud Fraction'); ylabel('Median UT NO_2'); title(region);
+            legend(l, {'Monthly','Daily'});
+        end
+        
+        function fig = plot_ground_cover()
+            hdfi = hdfinfo(misc_behr_update_plots.modis_landcover_file);
+            lc_type1 = double(hdfread(hdfi.Filename, hdfdsetname(hdfi,1,1,1)));
+            [lon,lat,xx,yy] = modis_cmg_latlon(0.05,[-125 -65],[25 50],'grid');
+            lc_type1 = lc_type1(yy,xx);
+            
+            % Get all but the "unclassified" land type
+            lc_ticks = [hdfi.Vgroup.Vgroup(1).SDS(1).Attributes(5:end-1).Value];
+            lc_labels = {hdfi.Vgroup.Vgroup(1).SDS(1).Attributes(5:end-1).Name};
+            
+            fig=figure;
+            map_ax = pcolor(lon,lat,lc_type1);
+            shading flat;
+            colormap(jet);
+            state_outlines('k');
+            cb=colorbar;
+            cb.Ticks = lc_ticks;
+            cb.TickLabels = lc_labels;
+            
+            set(gca,'fontsize',16);
+            cb.FontSize = 10;
+            fig.Position(3) = fig.Position(3)*1.5;
+            fig.Children(2).Position(3) = 0.63;
+        end
+        
+        function [fig_s3, fig_rad_v_geo, fig_clear, fig_cloudy, fig_tot_v_vis] = plot_vis_scatter(plot_gui)
+            if ~exist('plot_gui', 'var')
+                plot_gui = true;
+            end
+            
+            %vis_start_date = '2012-07-01';
+            vis_start_date = '2012-06-01';
+            %vis_end_date = '2012-07-14';
+            vis_end_date = '2012-08-31';
+            fields = {'BEHRColumnAmountNO2TropVisOnly', 'BEHRColumnAmountNO2Trop','CloudRadianceFraction','CloudFraction','CloudPressure','BEHRNO2apriori','XTrackQualityFlags'};
+            [no2_vis_old, no2_tot_old, cld_rad_frac_old, cld_frac_old, cld_pres_old, apriori_old, xtrack_old, pixel_info_old] = cat_sat_data(fullfile(misc_behr_update_plots.behr_nasa_brdfD_dir, 'MonthlyProfs'), fields, 'startdate', vis_start_date, 'enddate', vis_end_date);
+            [no2_vis_new, no2_tot_new, ~, ~, ~, ~, xtrack_new] = cat_sat_data(fullfile(misc_behr_update_plots.behr_nasa_brdf_vis_dir, 'MonthlyProfs'), fields, 'startdate', vis_start_date, 'enddate', vis_end_date);
+            
+            row_anom = xtrack_old > 0 | xtrack_new > 0;
+            
+            no2_vis_old(row_anom) = [];
+            no2_tot_old(row_anom) = [];
+            cld_rad_frac_old(row_anom) = [];
+            cld_frac_old(row_anom) = [];
+            cld_pres_old(row_anom) = [];
+            apriori_old = behr_apriori_surface(apriori_old);
+            apriori_old(row_anom) = [];
+            no2_vis_new(row_anom) = [];
+            no2_tot_new(row_anom) = [];
+            pixel_info_old(row_anom) = [];
+            
+            rdel = reldiff(no2_vis_new, no2_vis_old)*100;
+            
+            %{
+            figure;
+            scatter(no2_vis_old, no2_vis_new, [], rdel*100);
+            xlabel('Old visible VCD');
+            ylabel('New visible VCD');
+            cb=colorbar;
+            cb.Label.String = 'Percent change';
+            set(gca,'fontsize',16);
+            xylims([0 3e16]);
+            
+            figure;
+            line(no2_tot_old, no2_vis_old, 'marker', 'o', 'color', 'k', 'linestyle', 'none');
+            xlabel('Old total VCD');
+            ylabel('Old visible VCD');
+            set(gca,'fontsize',16);
+            
+            figure;
+            line(no2_tot_new, no2_vis_new, 'marker', 'o', 'color', 'k', 'linestyle', 'none');
+            xlabel('New total VCD');
+            ylabel('New visible VCD');
+            set(gca,'fontsize',16);
+            
+            figure;
+            scatter3(cld_rad_frac_old, cld_pres_old, rdel, [], apriori_old*1e9);
+            xlabel('Cloud radiance fraction');
+            ylabel('Cloud pressure');
+            zlabel('Percent change in vis NO2');
+            cb = colorbar;
+            cb.Label.String = 'Surface apriori [NO_2] (ppb)';
+            set(gca,'fontsize',16);
+            
+            figure;
+            scatter(rdel, cld_rad_frac_old, [], cld_frac_old);
+            xlabel('Percent change in vis NO2');
+            ylabel('Cloud radiance fraction');
+            cb=colorbar;
+            cb.Label.String = 'Geo. cloud frac.';
+            set(gca,'fontsize',16);
+            
+            figure;
+            plot(rdel, cld_pres_old, 'ko');
+            xlabel('Percent change in vis NO2');
+            ylabel('Cloud pressure');
+            set(gca,'fontsize',16);
+            
+            figure;
+            plot(rdel, apriori_old, 'ko');
+            xlabel('Percent change in vis NO2');
+            ylabel('Surface apriori [NO_2]');
+            set(gca,'fontsize',16);
+            %}
+            
+            % This is to answer why the difference in old and new visible
+            % columns gets so large
+            xstr = 'Cloud radiance fraction';
+            ystr = 'Cloud pressure';
+            zstr = 'Percent change in vis NO_2';
+            cstr = 'Surface apriori [NO_2] (ppb)';
+            if plot_gui
+                scatter3_slice_gui(cld_rad_frac_old, cld_pres_old, rdel, [], apriori_old*1e9,...
+                    'xlabel',xstr,'ylabel',ystr,'zlabel',zstr,'clabel',cstr);
+            else
+                fig_s3=figure;
+                scatter3(cld_rad_frac_old, cld_pres_old, rdel, [], apriori_old*1e9);
+                cb = colorbar;
+                xlabel(xstr);
+                ylabel(ystr);
+                zlabel(zstr);
+                cb.Label.String = cstr;
+                set(gca,'fontsize',16);
+            end
+            
+            % This should show that only when CF < 1 do we get really large
+            % changes, otherwise, the old and new vis VCDs should be
+            % similar.
+            fig_rad_v_geo = figure; 
+            scatter(cld_rad_frac_old, cld_frac_old, [], rdel);
+            line([0 1], [0 1], 'color', 'k', 'linewidth', 2, 'linestyle', '--');
+            xlabel('Cloud radiance fraction');
+            ylabel('Cloud fraction');
+            cb = colorbar;
+            cb.Label.String = 'Percent change in vis NO_2';
+            caxis([0 100]);
+            set(gca,'fontsize',16);
+            
+            xx_clear = cld_frac_old == 0 & cld_rad_frac_old ==0;
+            fig_clear = figure;
+            plot(no2_vis_old(xx_clear), no2_vis_new(xx_clear), 'ko');
+            xlabel('v2.1C V_{vis}');
+            ylabel('v3.0A V_{vis}');
+            title('Wholly clear conditions');
+            set(gca,'fontsize',16);
+            
+            xx_cloudy = cld_frac_old >= 1.0 & cld_rad_frac_old >= 1.0;
+            fig_cloudy = figure;
+            plot(no2_vis_old(xx_cloudy), no2_vis_new(xx_cloudy), 'ko');
+            xlabel('v2.1C V_{vis}');
+            ylabel('v3.0A V_{vis}');
+            title('Wholly cloudy conditions');
+            set(gca,'fontsize',16);
+            
+            % This is to answer why the new visible column is sometimes 0
+            % when the total is not.
+            xx = no2_vis_new == 0 & no2_tot_new ~= 0;
+            fig_tot_v_vis = figure;
+            scatter(cld_frac_old(xx), cld_pres_old(xx), [], no2_vis_new(xx));
+            cb = colorbar;
+            cb.Label.String = 'New vis NO2';
+            xlabel('Cloud fraction');
+            ylabel('Cloud pressure');
+            set(gca,'fontsize',16);
+        end
+        
+        function [fig_rel, fig_abs] = plot_bsa_to_brdf_indiv_pixel_changes(regenerate_from_behr_files)
+            
+            if ~exist('regenerate_from_behr_files', 'var')
+                regenerate_from_behr_files = true;
+            end
+            
+            concatenated_data_file = fullfile(misc_behr_update_plots.surf_refl_root, 'IndividualPixels_BSA_BRDF.mat');
+            
+            if regenerate_from_behr_files    
+                dates.jan_feb = {'startdate', '2012-01-01', 'enddate', '2012-02-29'};
+                dates.dec = {'startdate', '2012-12-01', 'enddate', '2012-12-31'};
+                dates.jun_jul_aug = {'startdate', '2012-06-01', 'enddate', '2012-08-31'};
+                
+                data.bsa_v5 = struct('path', fullfile(misc_behr_update_plots.behr_nasa_only_dir, 'SP_Files'));
+                data.bsa_v6 = struct('path', fullfile(misc_behr_update_plots.behr_modisv6_dir, 'SP_Files'));
+                data.brdf_v6 = struct('path', fullfile(misc_behr_update_plots.behr_nasa_brdfD_dir, 'SP_Files'));
+                
+                dates_fns = fieldnames(dates);
+                data_fns = fieldnames(data);
+                
+                for a=1:numel(dates_fns)
+                    fprintf('Loading ocean flags for %s\n', upper(dates_fns{a}));
+                    ocean_flag.(dates_fns{a}) = cat_sat_data(data.brdf_v6.path, 'AlbedoOceanFlag', dates.(dates_fns{a}){:});
+                    for b=1:numel(data_fns)
+                        fprintf('Loading %s for %s\n', data_fns{b}, upper(dates_fns{a}));
+                        data.(data_fns{b}).(dates_fns{a}) = cat_sat_data(data.(data_fns{b}).path, 'MODISAlbedo', dates.(dates_fns{a}){:});
+                    end
+                end
+                
+                SRData.bsa_v5_jja = data.bsa_v5.jun_jul_aug;
+                SRData.bsa_v6_jja = data.bsa_v6.jun_jul_aug;
+                SRData.brdf_v6_jja = data.brdf_v6.jun_jul_aug;
+                SRData.ocean_flag_jja = ocean_flag.jun_jul_aug;
+                
+                SRData.bsa_v5_djf = cat(1, data.bsa_v5.jan_feb, data.bsa_v5.dec);
+                SRData.bsa_v6_djf = cat(1, data.bsa_v6.jan_feb, data.bsa_v6.dec);
+                SRData.brdf_v6_djf = cat(1, data.brdf_v6.jan_feb, data.brdf_v6.dec);
+                SRData.ocean_flag_djf = cat(1, ocean_flag.jan_feb, ocean_flag.dec);
+                
+                save(concatenated_data_file, '-v7.3', '-struct', 'SRData');
+            else
+                SRData = load(concatenated_data_file); 
+            end
+            
+            v5v6_adel_djf = SRData.bsa_v6_djf(~SRData.ocean_flag_djf) - SRData.bsa_v5_djf(~SRData.ocean_flag_djf);
+            v5v6_rdel_djf = reldiff(SRData.bsa_v6_djf(~SRData.ocean_flag_djf), SRData.bsa_v5_djf(~SRData.ocean_flag_djf), true)*100;
+            
+            v5v6_adel_jja = SRData.bsa_v6_jja(~SRData.ocean_flag_jja) - SRData.bsa_v5_jja(~SRData.ocean_flag_jja);
+            v5v6_rdel_jja = reldiff(SRData.bsa_v6_jja(~SRData.ocean_flag_jja), SRData.bsa_v5_jja(~SRData.ocean_flag_jja), true)*100;
+            
+            bsa_brdf_adel_djf = SRData.brdf_v6_djf(~SRData.ocean_flag_djf) - SRData.bsa_v6_djf(~SRData.ocean_flag_djf);
+            bsa_brdf_rdel_djf = reldiff(SRData.brdf_v6_djf(~SRData.ocean_flag_djf), SRData.bsa_v6_djf(~SRData.ocean_flag_djf), true)*100;
+            
+            bsa_brdf_adel_jja = SRData.brdf_v6_jja(~SRData.ocean_flag_jja) - SRData.bsa_v6_jja(~SRData.ocean_flag_jja);
+            bsa_brdf_rdel_jja = reldiff(SRData.brdf_v6_jja(~SRData.ocean_flag_jja), SRData.bsa_v6_jja(~SRData.ocean_flag_jja), true)*100;
+            
+            fig_rel = figure;
+            % Plot without outliers because they span a huge range (that's
+            % what " 'symbol', '' " does).
+            boxplot(padcat(2, v5v6_rdel_jja, v5v6_rdel_djf, bsa_brdf_rdel_jja, bsa_brdf_rdel_djf), 'symbol','');
+            set(gca,'XTickLabel',{'BSA v6 - BSA v5, JJA', 'BSA v6 - BSA v5, DJF', 'BRF v6 - BSA v6, JJA', 'BRF v6 - BSA v6, DJF'},...
+                'fontsize', 16,...
+                'XTickLabelRotation',30,...
+                'YGrid','on');
+            ylabel('%\Delta surface reflectance');
+            ylim([-80 80]);
+            
+            % The absolute differences can keep the outliers because they
+            % won't be quite so ridiculous
+            fig_abs = figure;
+            boxplot(padcat(2, v5v6_adel_jja, v5v6_adel_djf, bsa_brdf_adel_jja, bsa_brdf_adel_djf));
+            set(gca,'XTickLabel',{'BSA v6 - BSA v5, JJA', 'BSA v6 - BSA v5, DJF', 'BRDF v6 - BSA v6, JJA', 'BRDF v6 - BSA v6, DJF'},...
+                'fontsize', 16,...
+                'XTickLabelRotation',30,...
+                'YGrid','on');
+            ylabel('%\Delta surface reflectance');
+        end
+        
+        function plot_dc3_avg_profiles()
+            Opts = struct('match_file', 'WRF-DC3-Matched-Data.mat', 'match_dir', '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/WRF',...
+                'quantity', 'NO2', 'lats_filter', 'all', 'strat_filter', false, 'fresh_filter', false);
+            profs = misc_wrf_chem_comp_plots('make-hybrid',Opts);
+            figure;
+            plot(profs.dc3_prof*1e3, profs.dc3_pres);
+            hold on
+            plot(profs.wrf_prof*1e3, profs.wrf_pres);
+            set(gca,'fontsize',16,'ydir','reverse');
+            xlabel('[NO_2] (ppbv)');
+            ylabel('Pressure (hPa)');
+            legend('DC3','WRF');
+        end
+        
+        function plot_sl7_rmse(redo_rmse_calcs)
+            if ~exist('redo_rmse_calcs','var')
+                redo_rmse_calcs = true;
+            end
+            
+            sl7_rmse_file = fullfile(misc_behr_update_plots.wrf_root,'sacramento_sl7_rmse.mat');
+            
+            if redo_rmse_calcs
+                pbase = '/Volumes/share-wrf1/FocusedRuns/Sacramento-SL6-check/DateWrongCheck';
+                pnew = '/Volumes/share-wrf1/FocusedRuns/Sacramento-BEARPEX-FullR2SMH-12km/Output';
+                [W.rmse, W.wrf_dates] = wrf_rmse(pbase,pnew,{'no','no2','o3'},'normalization','none');
+                save(sl7_rmse_file, '-struct', 'W');
+            else
+                W = load(sl7_rmse_file);
+            end
+            
+            figure;
+            hold on
+            plot(W.wrf_dates, W.rmse.no*1e6);
+            plot(W.wrf_dates, W.rmse.no2*1e6);
+            plot(W.wrf_dates, W.rmse.o3*1e6);
+            xlim([min(W.wrf_dates), max(W.wrf_dates)]);
+            legend('NO','NO_2','O_3');
+            datetick('x', 'mm/dd', 'keepticks','keeplimits');
+            ylabel('RMSE (pptv)');
+            set(gca,'fontsize',16,'yscale','log','ygrid','on')
             
         end
+        
     end
     
     methods(Static = true, Access = private)
@@ -987,6 +1494,7 @@ classdef misc_behr_update_plots
             daily_dir = fullfile(data_dir, 'DailyProfs');
             save_name = fullfile(data_dir, sprintf('%s-DJF-Monthly.mat', data_field));
             
+          
             if ~overwrite && exist(save_name, 'file')
                 fprintf('%s exists\n', save_name);
             else
@@ -1011,6 +1519,7 @@ classdef misc_behr_update_plots
                 fprintf('Saving as %s\n', save_name);
                 save(save_name, 'no2_vcds', 'lon_grid', 'lat_grid', 'count_grid', 'avg_config');
             end
+            
             
             save_name = fullfile(data_dir, sprintf('%s-JJA-Monthly.mat', data_field));
             if ~overwrite && exist(save_name, 'file')
@@ -1242,4 +1751,3 @@ classdef misc_behr_update_plots
     end
     
 end
-

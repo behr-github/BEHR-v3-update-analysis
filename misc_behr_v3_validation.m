@@ -394,6 +394,8 @@ classdef misc_behr_v3_validation
             %               nearest OMI overpass (in space) time
             %               match
             
+            % TODO: figure out how to add DC3 to this one. Since it doesn't
+            % have profile numbers.
             if ~exist('do_save', 'var')
                 do_save = ask_yn('Save the resulting match structures?');
             end
@@ -643,8 +645,108 @@ classdef misc_behr_v3_validation
             yy = (yy - radius):(yy + radius);
             yy = yy(yy > 0 & yy <= sz(2));
         end 
-
         
+        function [behr_daily, wrf_monthly, wrf_daily] = load_wrf_and_behr_data(plot_loc, date_in, load_gridded)
+            % Load the daily BEHR file, if it exists
+            if ~exist('load_gridded', 'var')
+                load_gridded = false;
+            end
+            
+            if load_gridded
+                [Native, Data] = load_behr_file(date_in, 'daily', 'us');
+            else
+                Data = load_behr_file(date_in, 'daily', 'us');
+                Native = Data; % solely for the "is location in swath" check
+            end
+            
+            wrf_int_mode = 'box';
+            plot_radius = 10; %TODO: make this resolution agnostic. Will probably need to modify find_loc_indices
+            
+            % Load a new monthly file, if needed
+            wrf_monthly_file = fullfile(find_wrf_path('us','monthly',date_in), sprintf('WRF_BEHR_monthly_%02d.nc', month(date_in)));
+            monthly_wrf_no2_vcds_tmp = compute_wrf_trop_columns(wrf_monthly_file, wrf_int_mode, 200);
+            monthly_wrf_lon_tmp = ncread(wrf_monthly_file, 'XLONG');
+            monthly_wrf_lat_tmp = ncread(wrf_monthly_file, 'XLAT');
+            
+            [xx_monthly, yy_monthly] = misc_behr_v3_validation.find_loc_indices(plot_loc, monthly_wrf_lon_tmp, monthly_wrf_lat_tmp, plot_radius);
+
+            wrf_monthly.lon = monthly_wrf_lon_tmp(xx_monthly, yy_monthly);
+            wrf_monthly.lat = monthly_wrf_lat_tmp(xx_monthly, yy_monthly);
+            wrf_monthly.no2_vcds = monthly_wrf_no2_vcds_tmp(xx_monthly, yy_monthly);
+            
+            % Get the WRF file name, but just retrieve the date b/c
+            % files produced on the cluster will have different paths
+            % and use the subset files, which aren't stored locally.
+            [~, daily_wrf_file_tmp] = fileparts(Data(1).BEHRWRFFile);
+            wrf_date = date_from_wrf_filenames(daily_wrf_file_tmp);
+            daily_file = fullfile(find_wrf_path('us','daily',wrf_date), sprintf('wrfout_d01_%s', datestr(wrf_date, 'yyyy-mm-dd_HH-MM-SS')));
+            daily_wrf_no2_vcds = compute_wrf_trop_columns(daily_file, wrf_int_mode, 200);
+            daily_wrf_lon = ncread(daily_file, 'XLONG');
+            daily_wrf_lat = ncread(daily_file, 'XLAT');
+            
+            [xx_daily, yy_daily] = misc_behr_v3_validation.find_loc_indices(plot_loc, daily_wrf_lon, daily_wrf_lat, plot_radius);
+            
+            wrf_daily.lon = daily_wrf_lon(xx_daily, yy_daily);
+            wrf_daily.lat = daily_wrf_lat(xx_daily, yy_daily);
+            wrf_daily.no2_vcds = daily_wrf_no2_vcds(xx_daily, yy_daily);
+            
+            behr_daily.lon = {};
+            behr_daily.lat = {};
+            behr_daily.no2_vcds = {};
+            behr_daily.no2_scds = {};
+            if load_gridded
+                behr_daily.areaweights = {};
+            end
+            
+            for a=1:numel(Data)
+                % Loop over every swath. If the location is in the box
+                % defined by the four corner pixel centers of the swath
+                % plot it
+                corner_x = [Native(a).Longitude(1,1), Native(a).Longitude(1,end), Native(a).Longitude(end,end), Native(a).Longitude(end,1)];
+                corner_y = [Native(a).Latitude(1,1), Native(a).Latitude(1,end), Native(a).Latitude(end,end), Native(a).Latitude(end,1)];
+                if ~inpolygon(plot_loc.Longitude, plot_loc.Latitude, corner_x, corner_y);
+                    continue
+                end
+                
+                badpix = mod(Data(a).BEHRQualityFlags, 2) ~= 0;
+                Data(a).BEHRColumnAmountNO2Trop(badpix) = NaN;
+                [xx_sat, yy_sat] = misc_behr_v3_validation.find_loc_indices(plot_loc, Data(a).Longitude, Data(a).Latitude, plot_radius);
+                if load_gridded
+                    behr_daily.lon{end+1} = Data(a).Longitude(xx_sat,yy_sat);
+                    behr_daily.lat{end+1} = Data(a).Latitude(xx_sat,yy_sat);
+                else
+                    behr_daily.lon{end+1} = squeeze(Data(a).FoV75CornerLongitude(1,xx_sat,yy_sat));
+                    behr_daily.lat{end+1} = squeeze(Data(a).FoV75CornerLatitude(1,xx_sat,yy_sat));
+                end
+                behr_daily.no2_vcds{end+1} = Data(a).BEHRColumnAmountNO2Trop(xx_sat,yy_sat);
+                behr_daily.no2_scds{end+1} = Data(a).BEHRColumnAmountNO2Trop(xx_sat,yy_sat) .* Data(a).BEHRAMFTrop(xx_sat, yy_sat);
+                if load_gridded
+                    behr_daily.areaweights{end+1} = Data(a).Areaweight;
+                end
+            end
+        end
+
+        function [box_vals, box_pres, box_quartiles] = make_boxplot_bins(pres, no2)
+            [box_vals, box_pres, box_quartiles] = bin_omisp_pressure(pres, no2, 'median');
+            return 
+            
+%             % old way, would need for true box plots
+%             [binned_no2, binned_pres] = bin_omisp_pressure(pres, no2, 'binonly');
+%             % Because BOXPLOT is pretty simpleminded, we need to make the
+%             % values and pressures vectors equal lengths
+%             box_vals = veccat(binned_no2{:});
+%             box_pres = nan(size(box_vals));
+%             i = 1;
+%             for a=1:numel(binned_no2)
+%                 j = i + numel(binned_no2{a}) - 1;
+%                 box_pres(i:j) = binned_pres(a);
+%                 i = j + 1;
+%             end
+%             
+%             box_nans = isnan(box_vals);
+%             box_vals(box_nans) = [];
+%             box_pres(box_nans) = [];
+        end
         %%%%%%%%%%%%%%%%%%%%%%
         % Plotting functions %
         %%%%%%%%%%%%%%%%%%%%%%
@@ -844,10 +946,12 @@ classdef misc_behr_v3_validation
                 v2_string = 'v2.1C';
                 v3M_string = 'v3.0A (M)';
                 v3D_string = 'v3.0A (D)';
+                title_product_str = 'BEHR';
             else
                 v2_string = 'v2.1';
                 v3M_string = 'v3.0';
                 v3D_string = 'v3.0';
+                title_product_str = 'NASA';
             end
             
             
@@ -864,13 +968,10 @@ classdef misc_behr_v3_validation
                 otherwise
                     E.notimplemented('prof_mode == %s', prof_mode);
             end
-            
-            
-            
-            
+
             data_lines = gobjects(size(data_structs));
-            fit_lines = gobjects(size(data_structs));
-            fit_legends = cell(size(data_structs));
+            fit_lines = gobjects(numel(data_structs)+1,1);
+            fit_legends = cell(size(fit_lines));
             line_fmts = struct('color', {'k','b','r', [0, 0.5, 0]}, 'marker', {'s','x','^','o'});
             fit_data = struct('P',[],'R2',[],'StdDevM',[],'StdDevB',[],'p_value',[],'x_var', labels.(x_var), 'y_var', labels.(y_var), 'prof_type',legend_strings);
             keep_fit_data = false(size(fit_data));
@@ -1331,14 +1432,11 @@ classdef misc_behr_v3_validation
             end
             
             dvec = start_date:end_date;
-            % Struct that holds the name of monthly file read in and its
-            % column data
-            monthly_file = '';
             
             for d=1:numel(dvec)
                 % Load the daily BEHR file, if it exists
                 try
-                    Data = load_behr_file(dvec(d), 'daily', 'us');
+                    [behr_daily, wrf_monthly, wrf_daily] = misc_behr_v3_validation.load_wrf_and_behr_data(plot_loc, dvec(d));
                 catch err
                     if strcmp(err.identifier, 'MATLAB:load:couldNotReadFile')
                         fprintf('No BEHR daily profile file available for %s\n', datestr(dvec(d)));
@@ -1348,45 +1446,7 @@ classdef misc_behr_v3_validation
                     end
                 end
                 
-                wrf_int_mode = 'box';
-                
-                % Load a new monthly file, if needed
-                wrf_monthly_file_tmp = fullfile(find_wrf_path('us','monthly',dvec(d)), sprintf('WRF_BEHR_monthly_%02d.nc', month(dvec(d))));
-                if ~strcmp(monthly_file, wrf_monthly_file_tmp)
-                    monthly_file = wrf_monthly_file_tmp;
-                    monthly_wrf_no2_vcds = compute_wrf_trop_columns(monthly_file, wrf_int_mode, 200);
-                    monthly_wrf_lon = ncread(monthly_file, 'XLONG');
-                    monthly_wrf_lat = ncread(monthly_file, 'XLAT');
-                end
-                
-                % Get the WRF file name, but just retrieve the date b/c
-                % files produced on the cluster will have different paths
-                % and use the subset files, which aren't stored locally.
-                [~, daily_wrf_file_tmp] = fileparts(Data(1).BEHRWRFFile);
-                wrf_date = date_from_wrf_filenames(daily_wrf_file_tmp);
-                daily_file = fullfile(find_wrf_path('us','daily',wrf_date), sprintf('wrfout_d01_%s', datestr(wrf_date, 'yyyy-mm-dd_HH-MM-SS')));
-                daily_wrf_no2_vcds = compute_wrf_trop_columns(daily_file, wrf_int_mode, 200);
-                daily_wrf_lon = ncread(daily_file, 'XLONG');
-                daily_wrf_lat = ncread(daily_file, 'XLAT');
-                
-                for a=1:numel(Data)
-                    % Loop over every swath. If the location is in the box
-                    % defined by the four corner pixel centers of the swath
-                    % plot it
-                    corner_x = [Data(a).Longitude(1,1), Data(a).Longitude(1,end), Data(a).Longitude(end,end), Data(a).Longitude(end,1)];
-                    corner_y = [Data(a).Latitude(1,1), Data(a).Latitude(1,end), Data(a).Latitude(end,end), Data(a).Latitude(end,1)];
-                    if ~inpolygon(plot_loc.Longitude, plot_loc.Latitude, corner_x, corner_y);
-                        continue
-                    end
-                    
-                    badpix = mod(Data(a).BEHRQualityFlags, 2) ~= 0;
-                    Data(a).BEHRColumnAmountNO2Trop(badpix) = NaN;
-                    
-                    plot_radius = 10; % number of grid cells or pixels around the location to plot
-                    [xx_sat, yy_sat] = misc_behr_v3_validation.find_loc_indices(plot_loc, Data(a).Longitude, Data(a).Latitude, plot_radius);
-                    [xx_monthly, yy_monthly] = misc_behr_v3_validation.find_loc_indices(plot_loc, monthly_wrf_lon, monthly_wrf_lat, plot_radius);
-                    [xx_daily, yy_daily] = misc_behr_v3_validation.find_loc_indices(plot_loc, daily_wrf_lon, daily_wrf_lat, plot_radius);
-                    
+                for a=1:numel(behr_daily.lon)
                     % Make the plot, 3 side-by-side figures
                     fig=figure;
                     fig.Position(3) = fig.Position(3)*2;
@@ -1394,13 +1454,13 @@ classdef misc_behr_v3_validation
                         subplot(1,3,p);
                         if p==1
                             % Convert VCD back to SCD
-                            pcolor(squeeze(Data(a).FoV75CornerLongitude(1,xx_sat,yy_sat)), squeeze(Data(a).FoV75CornerLatitude(1,xx_sat,yy_sat)), Data(a).BEHRColumnAmountNO2Trop(xx_sat,yy_sat) .* Data(a).BEHRAMFTrop(xx_sat, yy_sat));
+                            pcolor(behr_daily.lon{a}, behr_daily.lat{a}, behr_daily.no2_scds{a});
                             title('OMI Trop. SCD');
                         elseif p==2
-                            pcolor(monthly_wrf_lon(xx_monthly, yy_monthly), monthly_wrf_lat(xx_monthly, yy_monthly), monthly_wrf_no2_vcds(xx_monthly, yy_monthly));
+                            pcolor(wrf_monthly.lon, wrf_monthly.lat, wrf_monthly.no2_vcds);
                             title('Monthly WRF');
                         elseif p==3
-                            pcolor(daily_wrf_lon(xx_monthly, yy_monthly), daily_wrf_lat(xx_monthly, yy_monthly), daily_wrf_no2_vcds(xx_daily, yy_daily));
+                            pcolor(wrf_daily.lon, wrf_daily.lat, wrf_daily.no2_vcds);
                             title('Daily WRF');
                         else
                             E.notimplemented('>3 plots')
@@ -1415,6 +1475,87 @@ classdef misc_behr_v3_validation
             end
         end
         
+        function plot_campaign_profile_boxplot(campaign, include_error_bars)
+            E = JLLErrors;
+            
+            profs = load(misc_behr_v3_validation.wrf_comp_file);
+            allowed_campaigns = fieldnames(profs.monthly);
+            if ~exist('campaign', 'var')
+                campaign = ask_multichoice('Choose a campaign to plot', allowed_campaigns, 'list', true);
+            elseif ~ismember(campaign, allowed_campaigns)
+                E.badinput('CAMPAIGN must be one of: %s', strjoin(allowed_campaigns, ', '));
+            end
+            
+            if ~exist('include_error_bars', 'var')
+                include_error_bars = ask_yn('Plot with error bars?');
+            elseif ~isscalar(include_error_bars) || ~islogical(include_error_bars)
+                E.badinput('INCLUDE_ERROR_BARS must be a scalar logical')
+            end
+            
+            have_daily = isfield(profs.daily, campaign);
+            
+            % Bin monthly, v2, and (if available) version 3 data
+            [bins.air.no2, bins.air.pres, bins.air.quartiles] = misc_behr_v3_validation.make_boxplot_bins(profs.monthly.(campaign).All.match.data.pres, profs.monthly.(campaign).All.match.data.no2);
+            [bins.monthly_wrf.no2, bins.monthly_wrf.pres, bins.monthly_wrf.quartiles] = misc_behr_v3_validation.make_boxplot_bins(profs.monthly.(campaign).All.match.wrf.pres, profs.monthly.(campaign).All.match.wrf.no2);
+            [bins.v2_wrf.no2, bins.v2_wrf.pres, bins.v2_wrf.quartiles] = misc_behr_v3_validation.make_boxplot_bins(profs.v2.(campaign).All.match.wrf.pres, profs.v2.(campaign).All.match.wrf.no2);
+            if have_daily
+                [bins.daily_wrf.no2, bins.daily_wrf.pres, bins.daily_wrf.quartiles] = misc_behr_v3_validation.make_boxplot_bins(profs.daily.(campaign).All.match.wrf.pres, profs.daily.(campaign).All.match.wrf.no2);
+            end
+            
+            % Set up offsets and legend strings
+            if have_daily
+                offsets.air = 0.25;
+                offsets.daily_wrf = 0.12;
+                offsets.monthly_wrf = -0.12;
+                offsets.v2_wrf = -0.25;
+            else
+                offsets.air = 0.25;
+                offsets.monthly_wrf = 0;
+                offsets.v2_wrf = -0.25;
+            end
+            
+            legend_strs = struct('air', 'Aircraft', 'daily_wrf', 'Daily WRF', 'monthly_wrf', 'Monthly WRF', 'v2_wrf', 'BEHR v2 WRF');
+            
+            if include_error_bars
+                hPa_offset_factor = 10;
+                line_opts = {'marker', 'o', 'linestyle', 'none', 'linewidth', 2, 'markersize', 8};
+            else
+                hPa_offset_factor = 0;
+                line_opts = {'linestyle', '-', 'linewidth', 2, 'markersize', 8};
+            end
+            
+            % Plot styles
+            styles.air = struct('color', misc_behr_v3_validation.plot_colors.aircraft.avg);
+            styles.daily_wrf = struct('color', misc_behr_v3_validation.plot_colors.daily.avg);
+            styles.monthly_wrf = struct('color', misc_behr_v3_validation.plot_colors.monthly.avg);
+            styles.v2_wrf = struct('color', misc_behr_v3_validation.plot_colors.v2.avg);
+            
+            fns = fieldnames(bins);
+            l = gobjects(numel(fns),1);
+            legstr = cell(1,numel(fns));
+            
+            unit_conv = 1e3; % convert ppm to ppb
+            
+            figure;
+            for f=1:numel(fns)
+                l(f) = line(bins.(fns{f}).no2 * unit_conv, bins.(fns{f}).pres + offsets.(fns{f}) * hPa_offset_factor, 'color', styles.(fns{f}).color, line_opts{:});
+                if include_error_bars
+                    scatter_errorbars(bins.(fns{f}).no2 * unit_conv, bins.(fns{f}).pres + offsets.(fns{f}) * hPa_offset_factor, bins.(fns{f}).quartiles(1,:), bins.(fns{f}).quartiles(2,:), 'direction', 'x', 'color', styles.(fns{f}).color);
+                end
+                legstr{f} = legend_strs.(fns{f});
+            end
+            ax = gca;
+            ax.FontSize = 16;
+            ax.YDir = 'reverse';
+            ax.XLim(1) = 0;
+            xlabel('[NO_2] (ppbv)');
+            ylabel('Pressure (hPa)');
+            legend(l,legstr);
+            title(upper(strrep(campaign,'_','-')));
+        end
+        %%%%%%%%%%%%%%%%%%%%%%
+        % Analysis functions %
+        %%%%%%%%%%%%%%%%%%%%%%
         
         function results = record_scd_comparison()
             nsites = 20;
@@ -1424,7 +1565,7 @@ classdef misc_behr_v3_validation
             % Remove the rural sites
             locs = locs(1:70);
             
-            results = struct('loc_name', '', 'date', '', 'user_value', [], 'user_note', '');
+            results = struct('loc_name', '', 'date', '', 'user_value', [], 'user_confidence', [], 'user_note', '');
             results = repmat(results, nsites*ndays, 1);
             
             eval_opts = {'Daily - good agreement with SCD', 'Daily - bad agreement with SCD', 'Similar to monthly - good agreement with SCD', 'Similar to monthly - bad agreement with SCD', 'Not enough data'};
@@ -1436,7 +1577,7 @@ classdef misc_behr_v3_validation
                 b = 1;
                 while b <= ndays && ~isempty(site_dvec)
                     idate = randi(numel(site_dvec), 1);
-                    misc_behr_v3_validation.plot_scd_vs_wrf_columns(locs(isite).ShortName, dvec(idate), dvec(idate));
+                    misc_behr_v3_validation.plot_scd_vs_wrf_columns(locs(isite).ShortName, site_dvec(idate), site_dvec(idate));
                     try
                         user_ans = ask_multichoice('Evaluate this day', eval_opts, 'list', true, 'index', true);
                     catch err
@@ -1460,11 +1601,15 @@ classdef misc_behr_v3_validation
                         continue
                     end
                     
+                    % Ask the user to rate their confidence
+                    confidence = ask_number('Rate confidence (1 low to 3 high)', 'testfxn', @(x) isscalar(x) && x >= 1 && x <= 3, 'testmsg', 'Enter 1-3');
+                    
                     iresult = sub2ind([ndays, nsites], b, a);
                     results(iresult).loc_name = locs(isite).ShortName;
                     results(iresult).date = datestr(this_date);
                     results(iresult).user_value = user_ans;
                     results(iresult).user_note = input('Enter a note if you wish: ', 's');
+                    results(iresult).user_confidence = confidence;
                     b = b + 1;
                     fprintf('%d of %d completed...\n', iresult, nsites*ndays);
                 end
@@ -1475,7 +1620,49 @@ classdef misc_behr_v3_validation
             
             save(misc_behr_v3_validation.scd_comp_file, 'results');
         end
+        
+        function calculate_wrf_behr_correlation(locations, start_date, end_date)
+            % The idea of this function is to compute the correlation
+            % between BEHR SCDs and WRF monthly and daily VCDs, to see if
+            % the daily profiles provide better correlation than the
+            % monthly profiles. This will (if it works) be a more
+            % quantitative metric than the eyeballed agreement of
+            % record_scd_comparison().
+            E = JLLErrors;
+            
+            if ~exist('locations', 'var')
+                locations = misc_behr_v3_validation.read_locs_file();
+                loc_inds = ask_multiselect('Select which city(ies) to test', {locations.ShortName}, 'returnindex', true);
+                locations = locations(loc_inds);
+            elseif ~isstruct(locations) || any(~isfield('locations',{'ShortName', 'Latitude', 'Longitude', 'Radius'}))
+                E.badinput('LOCATIONS must be the struct returned by misc_behr_v3_validation.read_locs_file, or a subset of it');
+            end
+            
+            if ~exist('start_date', 'var')
+                start_date = datenum(ask_date('Enter the first date to test'));
+            else
+                start_date = validate_date(start_date);
+            end
+            
+            if ~exist('end_date', 'var')
+                end_date = datenum(ask_date('Enter the last date to test'));
+            else
+                end_date = validate_date(end_date);
+            end
+            
+            % Load each day/location's data and interpolate the BEHR pixels
+            % to the WRF grid
+            dvec = start_date:end_date;
+            for a=1:numel(locations)
+                for b=1:numel(dvec)
+                    % Load the gridded BEHR data so that we can average
+                    % over multiple orbits, if present
+                    [behr_daily, wrf_monthly, wrf_daily] = misc_behr_v3_validation.load_wrf_and_behr_data(locations(a), dvec(b), true);
+                    
+                end
+            end
+            
+        end
     end
     
 end
-
