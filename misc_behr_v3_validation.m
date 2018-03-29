@@ -970,7 +970,7 @@ classdef misc_behr_v3_validation
             end
 
             data_lines = gobjects(size(data_structs));
-            fit_lines = gobjects(numel(data_structs)+1,1);
+            fit_lines = gobjects(numel(data_structs),1);
             fit_legends = cell(size(fit_lines));
             line_fmts = struct('color', {'k','b','r', [0, 0.5, 0]}, 'marker', {'s','x','^','o'});
             fit_data = struct('P',[],'R2',[],'StdDevM',[],'StdDevB',[],'p_value',[],'x_var', labels.(x_var), 'y_var', labels.(y_var), 'prof_type',legend_strings);
