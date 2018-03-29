@@ -57,7 +57,7 @@ classdef misc_behr_update_plots
             G.checkState();
             
             save_dir = misc_behr_update_plots.behr_v3B_var_trop_dir;
-            misc_behr_update_plots.make_behr_with_parameters('8ed138f', 'eb1f53e', save_dir, do_overwrite, true);
+            misc_behr_update_plots.make_behr_with_parameters('8ed138f', 'eb1f53e', save_dir, do_overwrite, true, 'read_main_handle', @read_main);
         end
         
 
@@ -75,7 +75,7 @@ classdef misc_behr_update_plots
             G.checkState();
             
             save_dir = misc_behr_update_plots.behr_v3B_daily_fix_dir;
-            misc_behr_update_plots.make_behr_with_parameters('ea54fe3', 'a426124', save_dir, do_overwrite, true);
+            misc_behr_update_plots.make_behr_with_parameters('ea54fe3', 'a426124', save_dir, do_overwrite, true, 'read_main_handle', @read_main);
         end
         
         function make_behr_final(do_overwrite)
