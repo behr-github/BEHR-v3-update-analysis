@@ -57,7 +57,7 @@ classdef misc_behr_update_plots
             G.checkState();
             
             save_dir = misc_behr_update_plots.behr_v3B_var_trop_dir;
-            misc_behr_update_plots.make_behr_with_parameters('8ed138f', 'eb1f53e', save_dir, do_overwrite, true, 'read_main_handle', @read_main);
+            misc_behr_update_plots.make_behr_with_parameters('e63cdd2', 'eb1f53e', save_dir, do_overwrite, true, 'read_main_handle', @read_main);
         end
         
 
@@ -458,8 +458,27 @@ classdef misc_behr_update_plots
         end
         
         
-        function fig = plot_single_incr_diff(base_dir, new_dir, base_comparison_file, new_comparison_file, diff_type)
+        function fig = plot_single_incr_diff(varargin)
             E = JLLErrors;
+            p = inputParser;
+            p.addParameter('base_dir', '', @ischar);
+            p.addParameter('new_dir', '', @ischar);
+            p.addParameter('base_comparison_file', '', @ischar);
+            p.addParameter('new_comparison_file', '', @ischar);
+            p.addParameter('diff_type', '');
+            p.addParameter('plot_type', '');
+            p.addParameter('remove_outliers', []);
+            
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            base_dir = pout.base_dir;
+            new_dir = pout.new_dir;
+            base_comparison_file = pout.base_comparison_file;
+            new_comparison_file = pout.new_comparison_file;
+            diff_type = pout.diff_type;
+            plot_type = pout.plot_type;
+            do_remove_outliers = pout.remove_outliers;
             
             % Get all of the directories that would contain average files
             fns = fieldnames(misc_behr_update_plots);
@@ -473,14 +492,14 @@ classdef misc_behr_update_plots
             
             % Check if base and new directories were given. If not, ask the
             % user which ones to use
-            if ~exist('base_dir', 'var')
+            if isempty(base_dir)
                 base_dir = ask_multichoice('Select the base directory for the difference', data_dirs, 'list', true);
             elseif ~ismember(base_dir, data_dirs)
                 E.badinput('BASE_DIR is not one of the recognized data directories');
             end
             
             new_opts = veccat(data_dirs, {'No difference'});
-            if ~exist('new_dir', 'var')
+            if isempty(new_dir)
                 new_dir = ask_multichoice('Select the new directory for the difference', new_opts, 'list', true);
             elseif ~ismember(new_dir, new_opts)
                 E.badinput('BASE_DIR is not one of the recognized data directories');
@@ -500,7 +519,7 @@ classdef misc_behr_update_plots
             % Get user input of the file to compare (data field and season)
             % as well as the difference type. If doing a difference, allow
             % the user to compare daily and monthly files.
-            if ~exist('base_comparison_file', 'var')
+            if isempty(base_comparison_file)
                 base_comparison_file = ask_multichoice('Select the base file to compare against:', base_avg_files, 'list', true);
             elseif ~ismember(base_comparison_file, base_avg_files)
                 E.badinput('BASE_COMPARISON_FILE is not one of the allowed files: %s', strjoin(base_avg_files, ', '));
@@ -512,14 +531,14 @@ classdef misc_behr_update_plots
                 % difference
                 new_avg_files = misc_behr_update_plots.make_common_files_list({Fnew.name}, {base_comparison_file});
                 
-                if ~exist('new_comparison_file', 'var')
+                if isempty(new_comparison_file)
                     new_comparison_file = ask_multichoice('Select the new file to compare:', new_avg_files, 'list', true);
                 elseif ~ismember(new_comparison_file, new_avg_files)
                     E.badinput('NEW_COMPARISON_FILE is not one of the allowed files: %s', strjoin(new_avg_files, ', '));
                 end
                 
                 allowed_diff_types = {'rel', 'abs'};
-                if ~exist('diff_type', 'var')
+                if isempty(diff_type)
                     if ask_yn('Do a relative difference? (absolute if no)')
                         diff_type = 'rel';
                     else
@@ -530,6 +549,19 @@ classdef misc_behr_update_plots
                 end
             else
                 diff_type = 'none';
+            end
+            
+            allowed_plot_types = {'map', 'hist'};
+            if isempty(plot_type)
+                plot_type = ask_multichoice('Which plot type?', allowed_plot_types, 'list', true);
+            elseif ~ismember(plot_type, allowed_plot_types)
+                E.badinput('PLOT_TYPE must be one of: %s', strjoin(allowed_plot_types, ', '));
+            end
+            
+            if strcmpi(plot_type, 'hist') 
+                if isempty(do_remove_outliers)
+                    do_remove_outliers = ask_yn('Remove outliers from plot?');
+                end
             end
             
             Dbase = load(fullfile(base_dir, base_comparison_file));
@@ -544,8 +576,13 @@ classdef misc_behr_update_plots
                 [title_str, quantity_name, unit_name] = misc_behr_update_plots.get_title_from_file_name(base_comparison_file, base_dir);
             end
             
-            
-            fig = misc_behr_update_plots.plot_change_avg(Dbase.lon_grid, Dbase.lat_grid, Dbase.no2_vcds, Dnew.lon_grid, Dnew.lat_grid, Dnew.no2_vcds, diff_type, title_str, quantity_name, unit_name, '');
+            if strcmpi(plot_type, 'map')
+                fig = misc_behr_update_plots.plot_change_avg(Dbase.lon_grid, Dbase.lat_grid, Dbase.no2_vcds, Dnew.lon_grid, Dnew.lat_grid, Dnew.no2_vcds, diff_type, title_str, quantity_name, unit_name, '');
+            elseif strcmpi(plot_type, 'hist')
+                fig = misc_behr_update_plots.plot_change_hist(Dbase.lon_grid, Dbase.lat_grid, Dbase.no2_vcds, Dnew.lon_grid, Dnew.lat_grid, Dnew.no2_vcds, diff_type, title_str, quantity_name, unit_name, 'remove_plot_outliers', do_remove_outliers);
+            else
+                E.badinput('No action defined for plot type "%s"', plot_type);
+            end
         end
         
         
@@ -1649,28 +1686,87 @@ classdef misc_behr_update_plots
             end
         end
         
+        function fig = plot_change_hist(old_lon_grid, old_lat_grid, old_val, new_lon_grid, new_lat_grid, new_val, diff_type, title_str, quantity_name, unit_name, varargin)
+            p = inputParser;
+            p.addParameter('remove_plot_outliers', false, @(x) isscalar(x) && islogical(x));
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            [~, ~, old_val, new_val] = misc_behr_update_plots.match_different_size_data(old_lon_grid, old_lat_grid, old_val, new_lon_grid, new_lat_grid, new_val);
+            
+            do_remove_outliers = pout.remove_plot_outliers;
+            
+            if strcmpi(diff_type, 'rel')
+                val_diff = reldiff(new_val, old_val)*100;
+                x_label_str = sprintf(tex_in_printf('%%\Delta %s (%s)'), quantity_name, unit_name);
+            elseif strcmp(diff_type, 'abs')
+                val_diff = new_val - old_val;
+                x_label_str = sprintf(tex_in_printf('\Delta %s'), quantity_name);
+            elseif strcmpi(diff_type, 'none')
+                % assumes that old_val is all zeros
+                if any(old_val(:) ~= 0)
+                    E.badinput('For diff_type == "none", old_val must be all zeros');
+                end
+                val_diff = new_val - old_val;
+                x_label_str = quantity_name;
+            else
+                E.badinput('No action defined for diff_type = %s', diff_type)
+            end
+            
+            if do_remove_outliers
+                xx_plot = ~isoutlier(val_diff);
+            else
+                xx_plot = true(size(val_diff));
+            end
+            
+            % Create a stats text box
+            stats_text = sprintf('Mean = %.4g\n1\\sigma = %.4g\nMedian = %.4g\nQuartiles = %.4g, %.4g', nanmean(val_diff(:)), nanstd(val_diff(:)), nanmedian(val_diff(:)), quantile(val_diff(:), 0.25), quantile(val_diff(:), [0.75]));
+            
+            
+            fig = figure;
+            hist(val_diff(xx_plot), 100);
+            
+            
+            avg_diff = nanmean(val_diff(:));
+            
+            title(title_str);
+            xlabel(x_label_str);
+            set(gca,'fontsize', 16);
+            
+            % Get these after changing the font size because that can
+            % change the limits (in order to make the ticks fit better
+            % visually)
+            x_lim_vals = get(gca,'xlim');
+            y_lim_vals = get(gca,'ylim');
+            
+            l=line([avg_diff, avg_diff], y_lim_vals, 'color', 'r', 'linestyle', '--', 'linewidth', 2);
+            legend(l,{'Mean'});
+            
+            % Put the text near the top left or right corner with a little
+            % space between it and the edge of the plot. Choose the corner
+            % based on which side is further from zero, on the assumption
+            % that the histogram will peak near 0 so going further from 0
+            % gives the text more room.
+            if abs(x_lim_vals(1)) > abs(x_lim_vals(1))
+                text_x = x_lim_vals(1) + 0.02 * diff(x_lim_vals);
+                text_y = y_lim_vals(2) - 0.1 * diff(y_lim_vals);
+                h_align = 'left';
+            else
+                text_x = x_lim_vals(2) - 0.02 * diff(x_lim_vals);
+                % leave a little extra space for the legend on the right
+                % side
+                text_y = y_lim_vals(2) - 0.2 * diff(y_lim_vals);
+                h_align = 'right';
+            end
+            text(text_x, text_y, stats_text, 'verticalalignment', 'top', 'horizontalalignment', h_align, 'fontsize', 10);
+        end
+        
         function fig = plot_change_avg(old_lon_grid, old_lat_grid, old_val, new_lon_grid, new_lat_grid, new_val, diff_type, title_str, quantity_name, unit_name, save_dir)
             % pass an empty string as save_dir to just plot the figure
             % without saving or closing it
             E = JLLErrors;
             
-            if ~isequal(size(old_val), size(new_val))
-                % Very simplistic check to see which is smaller, assumes
-                % that the smaller one's coordinates are all inside the
-                % larger one.
-                if numel(old_val) < numel(new_val)
-                    new_val = interp2(new_lon_grid, new_lat_grid, new_val, old_lon_grid, old_lat_grid);
-                    lon_grid = old_lon_grid;
-                    lat_grid = old_lat_grid;
-                else
-                    old_val = interp2(old_lon_grid, old_lat_grid, old_val, new_lon_grid, new_lat_grid);
-                    lon_grid = new_lon_grid;
-                    lat_grid = new_lat_grid;
-                end
-            else
-                lon_grid = new_lon_grid;
-                lat_grid = new_lat_grid;
-            end
+            [lon_grid, lat_grid, old_val, new_val] = misc_behr_update_plots.match_different_size_data(old_lon_grid, old_lat_grid, old_val, new_lon_grid, new_lat_grid, new_val);
             
             if strcmpi(diff_type, 'rel')
                 val_diff = reldiff(new_val, old_val)*100;
@@ -1758,6 +1854,26 @@ classdef misc_behr_update_plots
             old_files_tmp = regexprep(list_of_files, '(Daily|Monthly)', '');
             xx_base = find_common_elements(old_files_tmp, new_files_tmp, 'nodup');
             file_list = list_of_files(xx_base);
+        end
+        
+        function [lon_grid, lat_grid, old_val, new_val] = match_different_size_data(old_lon_grid, old_lat_grid, old_val, new_lon_grid, new_lat_grid, new_val)
+            if ~isequal(size(old_val), size(new_val))
+                % Very simplistic check to see which is smaller, assumes
+                % that the smaller one's coordinates are all inside the
+                % larger one.
+                if numel(old_val) < numel(new_val)
+                    new_val = interp2(new_lon_grid, new_lat_grid, new_val, old_lon_grid, old_lat_grid);
+                    lon_grid = old_lon_grid;
+                    lat_grid = old_lat_grid;
+                else
+                    old_val = interp2(old_lon_grid, old_lat_grid, old_val, new_lon_grid, new_lat_grid);
+                    lon_grid = new_lon_grid;
+                    lat_grid = new_lat_grid;
+                end
+            else
+                lon_grid = new_lon_grid;
+                lat_grid = new_lat_grid;
+            end
         end
     end
     
