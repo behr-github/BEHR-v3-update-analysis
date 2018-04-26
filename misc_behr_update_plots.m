@@ -27,6 +27,8 @@ classdef misc_behr_update_plots
         figs_root_dir = '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Figures';
         modis_truecol_dir = '/Volumes/share-sat/SAT/MODIS/MYD09/Winter2012/';
         modis_landcover_file = '/Volumes/share-sat/SAT/MODIS/MCD12C1/MCD12C1.A2012001.051.2013178154403.hdf';
+        
+        daily_mark_file = 'has_daily.txt';
     end
     
     methods(Static = true)
@@ -37,6 +39,10 @@ classdef misc_behr_update_plots
         
         function d = my_dir()
             d = fileparts(mfilename('fullpath'));
+        end
+        
+        function name = average_save_name(data_field, months, prof_type)
+            name = sprintf('%s-%s-%s.mat', data_field, upper(months), capitalize_words(prof_type));
         end
         
         %%%%%%%%%%%%%%%%%%%%%%
@@ -367,7 +373,7 @@ classdef misc_behr_update_plots
                 struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_profs_wrftemp_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','BEHRAMFTrop','BEHRAMFTropVisOnly'}}),...
                 struct('dir', misc_behr_update_plots.behr_final_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'BEHRAMFTrop', 'BEHRAMFTropVisOnly'}}),...
                 struct('dir', misc_behr_update_plots.behr_v3B_daily_fix_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'BEHRAMFTrop', 'BEHRAMFTropVisOnly'}}),...
-                struct('dir', misc_behr_update_plots.behr_v3B_var_trop_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'BEHRAMFTrop', 'BEHRAMFTropVisOnly'}})...
+                struct('dir', misc_behr_update_plots.behr_v3B_var_trop_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'BEHRAMFTrop', 'BEHRAMFTropVisOnly','MODISAlbedo'}})...
                 );
             
             % Removed: struct('dir', misc_behr_update_plots.behr_nasa_brdfD_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'MODISAlbedo'}}),...
@@ -514,6 +520,8 @@ classdef misc_behr_update_plots
             if diff_bool
                 Fnew = dir(fullfile(new_dir, '*.mat'));
                 base_avg_files = misc_behr_update_plots.make_common_files_list({Fbase.name}, {Fnew.name});
+            else
+                base_avg_files = {Fbase.name};
             end
             
             % Get user input of the file to compare (data field and season)
@@ -941,6 +949,9 @@ classdef misc_behr_update_plots
             all_pres_levs = [];
             behr_no2_daily = [];
             behr_no2_monthly = [];
+            behr_lon = [];
+            behr_lat = [];
+            behr_date = [];
             
             dvec = datenum(fxn_start_date):datenum(fxn_end_date);
             for d=1:numel(dvec)
@@ -969,9 +980,26 @@ classdef misc_behr_update_plots
                     end
                     omi_cloudfrac = cat(1, omi_cloudfrac, DataDaily(a).CloudFraction(xx));
                     
+                    % Also, since the profiles are extrapolated to fill in
+                    % pressure levels below the WRF surface, we can end up
+                    % with some very crazy concentrations if we have to
+                    % extrapolate very far. This usually happens if the
+                    % GLOBE surface pressure is close to the bottom WRF
+                    % pressure but the next greater (i.e. below) standard
+                    % pressure is a good bit greater. Since those don't
+                    % matter for the AMF calculation, remove pressure
+                    % levels below the surface pressure (with a little
+                    % extra to account for any floating point comparison
+                    % issues)
+                    globe_surfpres = DataDaily(a).GLOBETerpres(xx);
+                    
                     % Get daily NO2
                     no2_profs = DataDaily(a).BEHRNO2apriori(:,xx);
                     pres_levs = DataDaily(a).BEHRPressureLevels(:,xx);
+                    for i_prof = 1:size(pres_levs,2)
+                        no2_profs(pres_levs(:,i_prof) > (globe_surfpres(i_prof) + 1), i_prof) = NaN;
+                    end
+                    
                     if as_shape_factor
                         vcds = integrate_published_behr_apriori(DataDaily(a));
                         vcds = vcds(xx);
@@ -984,6 +1012,10 @@ classdef misc_behr_update_plots
                     
                     % Now monthly
                     no2_profs_m = DataMonthly(a).BEHRNO2apriori(:,xx);
+                    for i_prof = 1:size(pres_levs,2)
+                        no2_profs_m(pres_levs(:,i_prof) > (globe_surfpres(i_prof) + 1), i_prof) = NaN;
+                    end
+                    
                     if as_shape_factor
                         vcds_m = integrate_published_behr_apriori(DataMonthly(a));
                         vcds_m = vcds_m(xx);
@@ -992,11 +1024,19 @@ classdef misc_behr_update_plots
                         end
                     end
                     behr_no2_monthly = cat(2, behr_no2_monthly, no2_profs_m);
+                    
+                    % For debugging purposes
+                    behr_lon = veccat(behr_lon, DataMonthly(a).Longitude(xx));
+                    behr_lat = veccat(behr_lat, DataMonthly(a).Latitude(xx));
+                    behr_date = veccat(behr_date, repmat(dvec(d), sum(xx(:)), 1));
+                    
                 end
             end
             
             cc20 = omi_cloudfrac <= 0.2;
             cc_all = true(size(omi_cloudfrac));
+            
+            
             
             % Average profiles with standard deviations
             behr_no2_monthly_interp = nan(numel(behr_pres_levels()), size(behr_no2_monthly,2));
@@ -1009,6 +1049,10 @@ classdef misc_behr_update_plots
                 behr_no2_monthly_interp(:,a) = naninterp1(all_pres_levs(:,a), behr_no2_monthly(:,a), behr_pres_levels());
                 behr_no2_daily_interp(:,a) = naninterp1(all_pres_levs(:,a), behr_no2_daily(:,a), behr_pres_levels());
             end
+            
+            % Save the debugging data - this can be removed after I find
+            % which profile has the crazy large NO2 around level 14
+            save(fullfile(misc_behr_update_plots.my_dir, 'Workspaces', 'Debugging', 'ProfileFrequency.mat'), '-v7.3', 'cc20', 'behr_lon', 'behr_lat', 'behr_date', 'behr_no2_monthly', 'behr_no2_daily', 'behr_no2_monthly_interp', 'behr_no2_daily_interp');
             
             if ~as_shape_factor
                 x_str = '%s [NO_2] (mixing ratio)';
@@ -1376,6 +1420,147 @@ classdef misc_behr_update_plots
             ylabel('%\Delta surface reflectance');
         end
         
+        
+        function [diff_array, rownames, colnames] = tabulate_average_differences(varargin)
+            p = inputParser;
+            p.addParameter('comparison_type','average');
+            p.addParameter('prof_type','monthly');
+            p.addParameter('diff_type','rel');
+            p.addParameter('variables',{'BEHRColumnAmountNO2Trop','BEHRColumnAmountNO2TropVisOnly'});
+            p.addParameter('months','JJA');
+            p.addParameter('use_vis_incr',false);
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            comparison_type = pout.comparison_type;
+            prof_type = pout.prof_type;
+            diff_type = pout.diff_type;
+            diff_variables = pout.variables;
+            diff_months = pout.months;
+            use_vis_incr = pout.use_vis_incr;
+            
+            allowed_prof_types = {'monthly','daily'};
+            if ~ismember(prof_type, allowed_prof_types)
+                E.badinput('PROF_TYPE must be one of: %s', strjoin(allowed_prof_types, ', '));
+            end
+            
+            allowed_months = {'JJA','DJF'};
+            if ~ismember(diff_months, allowed_months)
+                E.badinput('MONTHS must be one of: %s', strjoin(allowed_months, ', '));
+            end
+            
+            % variable will error if the average file does not exist or it
+            % is not a field in the Data structure.
+            increment_info = misc_behr_update_plots.get_increment_dirs(comparison_type, prof_type);
+            
+            % for each row, the first column is the base index to compare
+            % against, the second is the new index
+            comparison_indices = [1 2;
+                                  2 5;
+                                  5 6;
+                                  6 7;
+                                  8 9;
+                                  9 10;
+                                  10 11;
+                                  11 12];
+                            
+            % Set this to true for any diffs that should try to use
+            % visible-only values if use_vis_incr is true;
+            when_to_use_vis = false(size(comparison_indices,1),1);
+            when_to_use_vis(3) = use_vis_incr;
+            
+            % Set this to 'land' to only include over land or 'ocean' to
+            % include only statistics over ocean. Default is 'both'
+            land_or_ocean = repmat({'both'},size(comparison_indices,1),1);
+            if strcmpi(prof_type, 'monthly')
+                land_or_ocean{7} = 'ocean';
+            end
+                              
+            % if doing daily profiles, skip any that don't have daily
+            % profiles for at least one of the increments
+            if strcmpi(prof_type, 'daily')
+                has_daily = reshape([increment_info(comparison_indices(:)).has_daily], size(comparison_indices));
+                keep_incr = any(has_daily, 2);
+                comparison_indices = comparison_indices(keep_incr,:);
+                when_to_use_vis = when_to_use_vis(keep_incr);
+                land_or_ocean = land_or_ocean(keep_incr);
+            end
+            
+            % Define pretty column names for each likely variable
+            column_names = struct('BEHRAMFTrop','AMF',...
+                'BEHRAMFTropVisOnly','Vis. AMF',...
+                'BEHRColumnAmountNO2Trop','\chem{NO_2} VCD',...
+                'BEHRColumnAmountNO2TropVisOnly','\chem{NO_2} Vis. VCD');
+            if any(~isfield(column_names, diff_variables))
+                E.notimplemented('%s', 'One or more requested variables does not have a column name defined');
+            end
+            
+            % For every quantity we want in the table, need 3 columns for
+            % mat2latex in asym uncertainty mode.
+            n_cols_per_var = 2;
+            diff_array = nan(size(comparison_indices,1), 3 * n_cols_per_var * numel(diff_variables));
+            
+            
+            colnames = cell(2, n_cols_per_var * numel(diff_variables));
+            rownames = cell(1, size(comparison_indices,1));
+            for i_incr = 1:size(comparison_indices,1)
+                asterisks_to_append = {};
+                if when_to_use_vis(i_incr)
+                    incr_diff_variables = misc_behr_update_plots.append_vis_only(diff_variables);
+                    asterisks_to_append{end+1} = '*';
+                else
+                    incr_diff_variables = diff_variables;
+                end
+                
+                if strcmpi(land_or_ocean{i_incr}, 'ocean')
+                    asterisks_to_append{end+1} = '**';
+                elseif strcmpi(land_or_ocean{i_incr}, 'land')
+                    asterisks_to_append{end+1} = '***';
+                end
+                
+                base_ind = comparison_indices(i_incr, 1);
+                new_ind = comparison_indices(i_incr, 2);
+                base_dir = increment_info(base_ind).dir;
+                new_dir = increment_info(new_ind).dir;
+                
+                if increment_info(base_ind).has_daily
+                    base_prof_type = prof_type;
+                else
+                    base_prof_type = 'monthly';
+                end
+                if strcmpi(comparison_type, 'average') 
+                    diff_stats = misc_behr_update_plots.get_avg_diff_stats(base_dir, new_dir, base_prof_type, prof_type, incr_diff_variables, diff_months, diff_type, 'land_or_ocean', land_or_ocean{i_incr});
+                elseif strcmpi(comparison_type, 'individual')
+                    % For the individual differences, the profile type is
+                    % baked into the directory.
+                    diff_stats = misc_behr_update_plots.get_indiv_diff_stats(base_dir, new_dir, incr_diff_variables, diff_months, diff_type, 'land_or_ocean', land_or_ocean{i_incr});
+                else
+                    E.notimplemented('No action for comparison type = %s', comparison_type);
+                end
+                
+                for i_var = 1:numel(incr_diff_variables)
+                    i_col = (i_var-1)*n_cols_per_var*3 + 1;
+                    var_stats = diff_stats(i_var);
+                    diff_array(i_incr, i_col:(i_col+n_cols_per_var*3-1)) = [var_stats.mean, var_stats.stddev, nan, var_stats.median, abs(var_stats.quartiles(1) - var_stats.median), abs(var_stats.quartiles(2) - var_stats.median)];
+                    
+                    % Go ahead and make the column names in this for loop
+                    if i_incr == 1
+                        i_colname = (i_var-1)*n_cols_per_var + 1;
+                        colnames(1, i_colname:(i_colname+n_cols_per_var-1)) = repmat({column_names.(diff_variables{i_var})}, 1, n_cols_per_var);
+                        colnames(2, i_colname:(i_colname+n_cols_per_var-1)) = {'Mean','Median'};
+                    end
+                end
+                
+                
+                rownames{i_incr} = increment_info(new_ind).name;
+                if ~isempty(asterisks_to_append)
+                    rownames{i_incr} = strcat(rownames{i_incr}, sprintf('$^{%s}$', strjoin(asterisks_to_append, ',')));
+                end
+            end
+            
+        end
+        
+        
         function plot_dc3_avg_profiles()
             Opts = struct('match_file', 'WRF-DC3-Matched-Data.mat', 'match_dir', '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/WRF',...
                 'quantity', 'NO2', 'lats_filter', 'all', 'strat_filter', false, 'fresh_filter', false);
@@ -1419,7 +1604,395 @@ classdef misc_behr_update_plots
             
         end
         
+        function plot_avg_wrf_time_diff()
+            new_dir = misc_behr_update_plots.behr_v3B_daily_fix_dir;
+            old_dir = misc_behr_update_plots.behr_final_dir;
+            dvec = datenum('2012-06-01'):datenum('2012-08-31');
+            
+            old_wrf_hours = RunningAverage();
+            new_wrf_hours = RunningAverage();
+            
+            for d=1:numel(dvec)
+                fprintf('Working on %s\n', datestr(dvec(d)));
+                
+                Old = load(fullfile(old_dir, 'DailyProfs', behr_filename(dvec(d), 'daily', 'us', '.mat', 'v3-0A')),'OMI');
+                New = load(fullfile(new_dir, 'DailyProfs', behr_filename(dvec(d), 'daily', 'us', '.mat', 'v3-0B')),'OMI');
+                
+                if d == 1
+                    lon = Old.OMI(1).Longitude;
+                    lat = Old.OMI(1).Latitude;
+                end
+                
+                for i_orbit = 1:numel(Old.OMI)
+                    this_old_wrf_hour = hour(date_from_wrf_filenames(Old.OMI(i_orbit).BEHRWRFFile));
+                    old_wrf_hours.addData(ones(size(lon))*this_old_wrf_hour, Old.OMI(i_orbit).Areaweight);
+                    this_new_wrf_hour = hour(date_from_wrf_filenames(New.OMI(i_orbit).BEHRWRFFile));
+                    new_wrf_hours.addData(ones(size(lon))*this_new_wrf_hour, New.OMI(i_orbit).Areaweight);
+                end
+            end
+            
+            fig=figure;
+            subplot(3,1,1)
+            pcolor(lon, lat, old_wrf_hours.getWeightedAverage());
+            shading flat;
+            colorbar;
+            state_outlines('k','not','ak','hi');
+            title('Old average WRF hours');
+            
+            subplot(3,1,2)
+            pcolor(lon, lat, new_wrf_hours.getWeightedAverage());
+            shading flat;
+            colorbar;
+            state_outlines('k','not','ak','hi');
+            title('New average WRF hours');
+            
+            subplot(3,1,3)
+            pcolor(lon, lat, new_wrf_hours.getWeightedAverage() - old_wrf_hours.getWeightedAverage());
+            shading flat;
+            colorbar;
+            state_outlines('k','not','ak','hi');
+            title('Difference');
+            colormap(blue_red_cmap);
+            caxis([-1 1]);
+            
+            fig.Position(4) = 3*fig.Position(4);
+            
+        end
+        
+        function [positive_profile_avgs, negative_profile_avgs, pos_fig, neg_fig] = plot_daily_prof_time_change_cause(varargin)
+            E = JLLErrors;
+            
+            % First load the two summer average files for the pre and post
+            % timing change averages and find the 9 most positive and
+            % negative changes. 
+            avg_file = 'BEHRColumnAmountNO2Trop-JJA-Daily.mat';
+            new_avg_dir = misc_behr_update_plots.behr_v3B_daily_fix_dir;
+            old_avg_dir = misc_behr_update_plots.behr_final_dir;
+            new_avg_file = fullfile(new_avg_dir, avg_file);
+            old_avg_file = fullfile(old_avg_dir, avg_file);
+            
+            new_avg = load(new_avg_file);
+            old_avg = load(old_avg_file);
+            
+            if ~isequal(new_avg.lon_grid, old_avg.lon_grid) || ~isequal(new_avg.lat_grid, old_avg.lat_grid)
+                E.callError('coordinate_mismatch', 'New and old averages on inconsistant lat/lon grids')
+            end
+            
+            del = reldiff(new_avg.no2_vcds, old_avg.no2_vcds);
+            n_diffs = 9;
+            specific_regions = struct('lon', {[-82, -80], [-83, -82], [-88, -87]}, 'lat', {[26, 27], [36, 37], [42, 43]}); 
+            
+            [most_positive_lon, most_positive_lat] = misc_behr_update_plots.find_n_largest_change_coords(n_diffs, del, new_avg.lon_grid, new_avg.lat_grid, 'positive', specific_regions);
+            [most_negative_lon, most_negative_lat] = misc_behr_update_plots.find_n_largest_change_coords(n_diffs, del, new_avg.lon_grid, new_avg.lat_grid, 'negative', specific_regions);
+            
+            total_n_diffs = n_diffs + numel(specific_regions);
+            n_cols = 3;
+            subplot_dims = [ceil(total_n_diffs/n_cols), n_cols];
+            
+            % Now the long part - we need to load each day's files and
+            % figure out if the WRF file changed and add the profile to the
+            % appropriate average. I'm thinking four averages: all old
+            % profiles, all new profiles, changed old profiles, and changed
+            % new profiles.
+            
+            pres_vec = behr_pres_levels();
+            pres_vec(pres_vec < 200) = [];
+            prof_cell = repmat({nan(size(pres_vec'))}, 1, total_n_diffs);
+            weight_cell = repmat({0}, 1, total_n_diffs);
+            amf_cell = repmat({nan}, 1, total_n_diffs);
+            concat_cell = repmat({[]}, 1, total_n_diffs);
+            
+            % this will create a 1 x n_diffs struct;
+            substruct1 = struct('no2', prof_cell, 'weight', weight_cell, 'amf', amf_cell, 'all_amfs', concat_cell, 'all_weights', concat_cell, 'all_grid_vcds', concat_cell, 'all_grid_weights', concat_cell, 'plot_style', 'c-');
+            substruct2 = struct('no2', prof_cell, 'weight', weight_cell, 'amf', amf_cell, 'all_amfs', concat_cell, 'all_weights', concat_cell, 'all_grid_vcds', concat_cell, 'all_grid_weights', concat_cell, 'plot_style', 'b-');
+            substruct3 = struct('no2', prof_cell, 'weight', weight_cell, 'amf', amf_cell, 'all_amfs', concat_cell, 'all_weights', concat_cell, 'all_grid_vcds', concat_cell, 'all_grid_weights', concat_cell, 'plot_style', 'm--');
+            substruct4 = struct('no2', prof_cell, 'weight', weight_cell, 'amf', amf_cell, 'all_amfs', concat_cell, 'all_weights', concat_cell, 'all_grid_vcds', concat_cell, 'all_grid_weights', concat_cell, 'plot_style', 'r--');
+            
+            positive_profile_avgs = struct('all_new', substruct1, 'all_old', substruct2, 'changed_new', substruct3, 'changed_old', substruct4);
+            negative_profile_avgs = struct('all_new', substruct1, 'all_old', substruct2, 'changed_new', substruct3, 'changed_old', substruct4);
+            
+            dvec = datenum('2012-06-01'):datenum('2012-08-31');
+            for d=1:numel(dvec)
+                fprintf('Working on %s\n', datestr(dvec(d)));
+                
+                Old = load(fullfile(old_avg_dir, 'DailyProfs', behr_filename(dvec(d), 'daily', 'us', '.mat', 'v3-0A')));
+                New = load(fullfile(new_avg_dir, 'DailyProfs', behr_filename(dvec(d), 'daily', 'us', '.mat', 'v3-0B')));
+                
+                if numel(Old.OMI) ~= numel(Old.Data) || numel(New.OMI) ~= numel(New.Data) || numel(Old.Data) ~= numel(New.Data)
+                    E.notimplemented('structures have different numbers of elements')
+                end
+                
+                for i_orbit = 1:numel(Old.Data)
+                    [positive_profile_avgs.all_old, positive_profile_avgs.all_new] = misc_behr_update_plots.find_changed_profiles(...
+                        positive_profile_avgs.all_old, positive_profile_avgs.all_new, Old.Data(i_orbit), New.Data(i_orbit), Old.OMI(i_orbit), New.OMI(i_orbit), most_positive_lon, most_positive_lat, pres_vec, 'all');
+                    [positive_profile_avgs.changed_old, positive_profile_avgs.changed_new] = misc_behr_update_plots.find_changed_profiles(...
+                        positive_profile_avgs.changed_old, positive_profile_avgs.changed_new, Old.Data(i_orbit), New.Data(i_orbit), Old.OMI(i_orbit), New.OMI(i_orbit), most_positive_lon, most_positive_lat, pres_vec, 'changed');
+                    [negative_profile_avgs.all_old, negative_profile_avgs.all_new] = misc_behr_update_plots.find_changed_profiles(...
+                        negative_profile_avgs.all_old, negative_profile_avgs.all_new, Old.Data(i_orbit), New.Data(i_orbit), Old.OMI(i_orbit), New.OMI(i_orbit), most_negative_lon, most_negative_lat, pres_vec, 'all');
+                    [negative_profile_avgs.changed_old, negative_profile_avgs.changed_new] = misc_behr_update_plots.find_changed_profiles(...
+                        negative_profile_avgs.changed_old, negative_profile_avgs.changed_new, Old.Data(i_orbit), New.Data(i_orbit), Old.OMI(i_orbit), New.OMI(i_orbit), most_negative_lon, most_negative_lat, pres_vec, 'changed');
+                end
+            end
+            
+            % Finally we can plot them
+            pos_fig = figure;
+            group_fns = fieldnames(positive_profile_avgs);
+            for i_prof = 1:total_n_diffs
+                subplot(subplot_dims(1), subplot_dims(2), i_prof);
+                legstr = cell(1, numel(group_fns));
+                hold on
+                for i_group = 1:numel(group_fns)
+                    plot(positive_profile_avgs.(group_fns{i_group})(i_prof).no2 ./ positive_profile_avgs.(group_fns{i_group})(i_prof).weight, pres_vec, positive_profile_avgs.(group_fns{i_group})(i_prof).plot_style);
+                    legstr{i_group} = sprintf('%s (A = %.2f)', strrep(capitalize_words(group_fns{i_group}),'_',' '), positive_profile_avgs.(group_fns{i_group})(i_prof).amf ./ positive_profile_avgs.(group_fns{i_group})(i_prof).weight);
+                end
+                legend(legstr{:});
+            end
+            title('Positive VCD changes');
+            
+            neg_fig = figure;
+            group_fns = fieldnames(negative_profile_avgs);
+            for i_prof = 1:total_n_diffs
+                subplot(subplot_dims(1), subplot_dims(2), i_prof);
+                legstr = cell(1, numel(group_fns));
+                hold on
+                for i_group = 1:numel(group_fns)
+                    plot(negative_profile_avgs.(group_fns{i_group})(i_prof).no2 ./ negative_profile_avgs.(group_fns{i_group})(i_prof).weight, pres_vec, negative_profile_avgs.(group_fns{i_group})(i_prof).plot_style);
+                    legstr{i_group} = sprintf('%s (A = %.2f)', strrep(capitalize_words(group_fns{i_group}),'_',' '), negative_profile_avgs.(group_fns{i_group})(i_prof).amf ./ negative_profile_avgs.(group_fns{i_group})(i_prof).weight);
+                end
+                legend(legstr{:});
+            end
+            title('Negative VCD changes');
+        end
+        
+        function fig = plot_amf_reproduction_skill(varargin)
+            % Plot how well the AMF can be reproduced from the published
+            % scattering weights, both pre-separate and post-separate.
+            E = JLLErrors;
+            p = inputParser;
+            p.addParameter('diff_type', '');
+            p.addParameter('plot_type', '');
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            diff_type = pout.diff_type;
+            allowed_diff_types = {'abs','rel'};
+            if isempty(diff_type)
+                diff_type = ask_multichoice('Which difference type?', allowed_diff_types, 'list', true);
+            elseif ~ismember(diff_type, allowed_diff_types)
+                E.badinput('DIFF_TYPE must be one of: %s', strjoin(allowed_diff_types, ', '))
+            end
+            
+            plot_type = pout.plot_type;
+            allowed_plot_types = {'box','hist'};
+            if isempty(plot_type)
+                plot_type = ask_multichoice('Which type of plot to make?', allowed_plot_types, 'list', true);
+            elseif ~ismember(plot_type, allowed_plot_types)
+                E.badinput('PLOT_TYPE must be one of: %s', strjoin(allowed_plot_types, ', '));
+            end
+            
+            switch diff_type
+                case 'abs'
+                    diff_fxn = @(a,b) a - b;
+                    label_str = '\Delta AMF';
+                case 'rel'
+                    diff_fxn = @(a,b) reldiff(a,b) * 100;
+                    label_str = '%\Delta AMF';
+                otherwise
+                    E.notimplemented('No difference function defined for diff type = %s', diff_type)
+            end
+            
+            plot_dates = {'2012-01-01','2012-04-01','2012-06-01','2012-10-01'};
+            
+            total_amf_diffs = struct('separate', [], 'unified', []);
+            vis_amf_diffs = struct('separate', [], 'unified', []);
+            data_paths = struct('separate', misc_behr_update_plots.behr_v3B_var_trop_dir, 'unified', misc_behr_update_plots.behr_final_dir);
+            versions = struct('separate', 'v3-0B', 'unified', 'v3-0A');
+            
+            fns = fieldnames(total_amf_diffs);
+            for i_fn = 1:numel(fns)
+                for i_date = 1:numel(plot_dates)
+                    % load the structures from an increment before and after
+                    % the introduction of separate clear and cloudy scattering
+                    % weights.
+                    D = load(fullfile(data_paths.(fns{i_fn}), 'DailyProfs', behr_filename(plot_dates{i_date}, 'daily', 'us', '.mat', versions.(fns{i_fn}))), 'Data');
+                    
+                    for i_data = 1:numel(D.Data)
+                        [total_amfs, vis_amfs] = test_published_scattering_weights(D.Data(i_data));
+                        total_amf_diffs.(fns{i_fn}) = veccat(total_amf_diffs.(fns{i_fn}), diff_fxn(total_amfs, D.Data(i_data).BEHRAMFTrop), 'column');
+                        vis_amf_diffs.(fns{i_fn}) = veccat(vis_amf_diffs.(fns{i_fn}), diff_fxn(vis_amfs, D.Data(i_data).BEHRAMFTropVisOnly), 'column');
+                    end
+                end
+            end
+            
+            % Construct the array to make the boxplots 
+            fig = figure;
+            if strcmpi(plot_type, 'box')
+                fig.Position(3:4) = [1, numel(fns)] .* fig.Position(3:4);
+            elseif strcmpi(plot_type, 'hist')
+                fig.Position(3:4) = [numel(fns), 2] .* fig.Position(3:4);
+            end
+            
+            for i_fn = 1:numel(fns)
+                if strcmpi(plot_type, 'box')
+                    diff_data = cat(2, total_amf_diffs.(fns{i_fn}), vis_amf_diffs.(fns{i_fn}));
+                    diff_labels = {'Total AMF', 'Vis. AMF'};
+                    
+                    subplot(1, numel(fns), i_fn);
+                    boxplot(diff_data, 'labels', diff_labels);
+                    ylabel(label_str);
+                    set(gca,'fontsize',16,'XTickLabelRotation',30,'ygrid','on');
+                    title(sprintf('%s SWs', fns{i_fn}));
+                elseif strcmpi(plot_type, 'hist')
+                    subplot(numel(fns), 2, (i_fn-1)*2+1);
+                    histstats(total_amf_diffs.(fns{i_fn})(:), 100, 'fontsize', 16);
+                    title(sprintf('Total AMFs\n%s SWs', capitalize_words(fns{i_fn})));
+                    xlabel(label_str);
+                    
+                    subplot(numel(fns), 2, i_fn*2);
+                    histstats(vis_amf_diffs.(fns{i_fn})(:), 100, 'fontsize', 16);
+                    title(sprintf('Visible-only AMFs\n%s SWs', capitalize_words(fns{i_fn})));
+                    xlabel(label_str);
+                else
+                    E.notimplemented('No action for plot type "%s" designated', plot_type);
+                end
+            end
+        end
+        
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%
+        % Public helper functions %
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%
+        
+        function stats = get_avg_diff_stats(base_dir, new_dir, old_prof_type, new_prof_type, diff_variables, diff_months, diff_type, varargin)
+            E = JLLErrors;
+            p = inputParser;
+            p.addParameter('hist_norm','count');
+            p.addParameter('land_or_ocean','both');
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            hist_norm = pout.hist_norm;
+            land_or_ocean = pout.land_or_ocean;
+            [ocean_mask.mask, ocean_mask.lon, ocean_mask.lat] = get_modis_ocean_mask([-130, -60], [20 55]);
+            
+            
+            for i_var = 1:numel(diff_variables)
+                old_avg_name = misc_behr_update_plots.average_save_name(diff_variables{i_var}, diff_months, old_prof_type);
+                Old = load(fullfile(base_dir, old_avg_name));
+                new_avg_name = misc_behr_update_plots.average_save_name(diff_variables{i_var}, diff_months, new_prof_type);
+                New = load(fullfile(new_dir, new_avg_name));
+                
+                Old = misc_behr_update_plots.apply_outside(Old, base_dir);
+                New = misc_behr_update_plots.apply_outside(New, new_dir);
+                [lon_grid, lat_grid, old_data, new_data] = misc_behr_update_plots.match_different_size_data(Old.lon_grid, Old.lat_grid, Old.no2_vcds, New.lon_grid, New.lat_grid, New.no2_vcds);
+                
+                
+                if strcmpi(diff_type, 'rel')
+                    del = reldiff(new_data, old_data)*100;
+                    hist_bins = -200:200;
+                elseif strcmpi(diff_type, 'abs')
+                    del = new_data - old_data;
+                    hist_bins = -2e16:1e14:2e16;
+                else
+                    E.notimplemented('diff_type = %s', diff_type);
+                end
+                
+                if ~strcmpi(land_or_ocean, 'both')
+                    ocean_mask_interp = logical(round(interp2(ocean_mask.lon, ocean_mask.lat, double(ocean_mask.mask), lon_grid, lat_grid)));
+                    if strcmpi(land_or_ocean, 'ocean')
+                        del = del(ocean_mask_interp);
+                    elseif strcmpi(land_or_ocean, 'land')
+                        del = del(~ocean_mask_interp);
+                    else
+                        E.notimplemented('No action specified for land_or_ocean == %s', land_or_ocean);
+                    end
+                end
+                
+                del(isoutlier(del(:))) = [];
+                
+                stats(i_var).hist = histcounts(del, hist_bins, 'Normalization', hist_norm);
+                stats(i_var).mean = nanmean(del(:));
+                stats(i_var).stddev = nanstd(del(:));
+                stats(i_var).median = nanmedian(del(:));
+                stats(i_var).quartiles = quantile(del(:), [0.25 0.75]);
+            end
+        end
+        
+        function stats = get_indiv_diff_stats(base_dir, new_dir, incr_diff_variables, diff_months, diff_type, varargin)
+            E = JLLErrors;
+            
+            p = inputParser;
+            p.addParameter('hist_norm','count');
+            p.addParameter('land_or_ocean','both');
+            p.addParameter('cloud_frac', 0.2);
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            hist_norm = pout.hist_norm;
+            land_or_ocean = pout.land_or_ocean;
+            cloud_frac = pout.cloud_frac;
+            
+            switch upper(diff_months)
+                case 'JJA'
+                    start_date = '2012-06-01';
+                    end_date = '2012-08-31';
+                case 'DJF'
+                    start_date = {'2012-01-01','2012-12-01'};
+                    end_date = {'2012-02-29','2012-12-31'};
+                otherwise
+                    E.badinput('DIFF_MONTHS must be "JJA" or "DJF"')
+            end
+            
+            if ~strcmpi(land_or_ocean, 'both')
+                % Request the ocean flag only if we need to filter by ocean
+                % - this is kind of a hack because the earliest increments
+                % will not have it, so this relies on the expectation that
+                % we will not need to filter for land/ocean for those
+                % increments.
+                data_fields = veccat(incr_diff_variables, 'AlbedoOceanFlag');
+            else
+                data_fields = incr_diff_variables;
+            end
+            
+            reject_args = {'detailed', struct('cloud_type', 'omi', 'cloud_frac', cloud_frac, 'row_anom_mode', 'XTrackFlags', 'check_behr_amf', true)};
+            base_pixels = cat_sat_data(base_dir, data_fields, 'startdate', start_date, 'enddate', end_date, 'struct_out', true, 'reject_args', reject_args);
+            new_pixels = cat_sat_data(new_dir, data_fields, 'startdate', start_date, 'enddate', end_date, 'struct_out', true, 'reject_args', reject_args);
+            
+            for i_var = 1:numel(incr_diff_variables)
+                new_data = new_pixels.(incr_diff_variables{i_var});
+                old_data = base_pixels.(incr_diff_variables{i_var});
+                if strcmpi(diff_type, 'rel')
+                    del = reldiff(new_data, old_data)*100;
+                    hist_bins = -200:200;
+                elseif strcmpi(diff_type, 'abs')
+                    del = new_data - old_data;
+                    hist_bins = -2e16:1e14:2e16;
+                else
+                    E.notimplemented('diff_type = %s', diff_type);
+                end
+                
+                if ~strcmpi(land_or_ocean, 'both')
+                    ocean_mask = base_pixels.AlbedoOceanFlag | new_pixels.AlbedoOceanFlag;
+                    if strcmpi(land_or_ocean, 'ocean')
+                        del = del(ocean_mask);
+                    elseif strcmpi(land_or_ocean, 'land')
+                        del = del(~ocean_mask);
+                    else
+                        E.notimplemented('No action specified for land_or_ocean == %s', land_or_ocean);
+                    end
+                end
+                
+                del(isoutlier(del(:))) = [];
+                
+                stats(i_var).hist = histcounts(del, hist_bins, 'Normalization', hist_norm);
+                stats(i_var).mean = nanmean(del(:));
+                stats(i_var).stddev = nanstd(del(:));
+                stats(i_var).median = nanmedian(del(:));
+                stats(i_var).quartiles = quantile(del(:), [0.25 0.75]);
+            end
+        end
     end
+    
+    
     
     methods(Static = true, Access = private)
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -1512,6 +2085,12 @@ classdef misc_behr_update_plots
                 'overwrite', do_overwrite);
             
             if has_daily_profs
+                % Make a dummy text file that get_increment_dirs can use to
+                % quickly determine that this directory has daily profs
+                fid = fopen(fullfile(root_save_dir, misc_behr_update_plots.daily_mark_file), 'w');
+                fprintf(fid, 'Has daily profs');
+                fclose(fid);
+                
                 daily_save_dir = fullfile(root_save_dir, 'DailyProfs');
                 if ~exist(daily_save_dir, 'dir')
                     mkdir(daily_save_dir);
@@ -1524,6 +2103,8 @@ classdef misc_behr_update_plots
                     'overwrite', do_overwrite);
             end
         end
+        
+        
         
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         % Helper functions for the incremental change averages %
@@ -1540,7 +2121,7 @@ classdef misc_behr_update_plots
             
             monthly_dir = fullfile(data_dir, 'MonthlyProfs');
             daily_dir = fullfile(data_dir, 'DailyProfs');
-            save_name = fullfile(data_dir, sprintf('%s-DJF-Monthly.mat', data_field));
+            save_name = fullfile(data_dir, misc_behr_update_plots.average_save_name(data_field, 'DJF', 'Monthly'));
             
           
             if ~overwrite && exist(save_name, 'file')
@@ -1569,7 +2150,7 @@ classdef misc_behr_update_plots
             end
             
             
-            save_name = fullfile(data_dir, sprintf('%s-JJA-Monthly.mat', data_field));
+            save_name = fullfile(data_dir, misc_behr_update_plots.average_save_name(data_field, 'JJA', 'Monthly'));
             if ~overwrite && exist(save_name, 'file')
                 fprintf('%s exists\n', save_name);
             else
@@ -1592,7 +2173,7 @@ classdef misc_behr_update_plots
             % in the DailyProfs directory
             F = dir(fullfile(daily_dir, '*.mat'));
             if ~isempty(F)
-                save_name = fullfile(data_dir, sprintf('%s-DJF-Daily.mat', data_field));
+                save_name = fullfile(data_dir, misc_behr_update_plots.average_save_name(data_field, 'DJF', 'Daily'));
                 if ~overwrite && exist(save_name, 'file')
                     fprintf('%s exists\n', save_name);
                 else
@@ -1612,7 +2193,7 @@ classdef misc_behr_update_plots
                     save(save_name, 'no2_vcds', 'lon_grid', 'lat_grid', 'count_grid', 'avg_config');
                 end
                 
-                save_name = fullfile(data_dir, sprintf('%s-JJA-Daily.mat', data_field));
+                save_name = fullfile(data_dir, misc_behr_update_plots.average_save_name(data_field, 'JJA', 'Daily'));
                 if ~overwrite && exist(save_name, 'file')
                     fprintf('%s exists\n', save_name);
                 else
@@ -1648,7 +2229,15 @@ classdef misc_behr_update_plots
             end
             
             base_name_parts = strsplit(base_filename, '-');
-            new_name_parts = strsplit(new_filename, '-');
+            if ~exist('new_name_parts', 'var')
+                % If only base name passed because not doing a difference,
+                % just make the new parts the same as the old, that way
+                % when we make titles and labels, we will automatically
+                % know not to duplicate them.
+                new_name_parts = base_name_parts;
+            else
+                new_name_parts = strsplit(new_filename, '-');
+            end
             % Quantity - shorten it quite a bit so the title isn't insanely
             % long
             switch base_name_parts{1}
@@ -1673,7 +2262,7 @@ classdef misc_behr_update_plots
             time_period = base_name_parts{2};
             
             % Monthly or daily profiles used
-            if ~is_diff || strcmp(base_name_parts{3}, new_name_parts{3});
+            if ~is_diff || strcmp(base_name_parts{3}, new_name_parts{3})
                 profs_used = sprintf('%s Profs', base_name_parts{3});
             else
                 profs_used = sprintf('%s vs %s Profs', new_name_parts{3}, base_name_parts{3});
@@ -1698,17 +2287,17 @@ classdef misc_behr_update_plots
             
             if strcmpi(diff_type, 'rel')
                 val_diff = reldiff(new_val, old_val)*100;
-                x_label_str = sprintf(tex_in_printf('%%\Delta %s (%s)'), quantity_name, unit_name);
+                x_label_str = sprintf(tex_in_printf('%%\Delta %s'), quantity_name);
             elseif strcmp(diff_type, 'abs')
                 val_diff = new_val - old_val;
-                x_label_str = sprintf(tex_in_printf('\Delta %s'), quantity_name);
+                x_label_str = sprintf(tex_in_printf('\Delta %s (%s)'), quantity_name, unit_name);
             elseif strcmpi(diff_type, 'none')
                 % assumes that old_val is all zeros
                 if any(old_val(:) ~= 0)
                     E.badinput('For diff_type == "none", old_val must be all zeros');
                 end
                 val_diff = new_val - old_val;
-                x_label_str = quantity_name;
+                x_label_str = sprintf('%s (%s)', quantity_name, unit_name);
             else
                 E.badinput('No action defined for diff_type = %s', diff_type)
             end
@@ -1720,45 +2309,13 @@ classdef misc_behr_update_plots
             end
             
             % Create a stats text box
-            stats_text = sprintf('Mean = %.4g\n1\\sigma = %.4g\nMedian = %.4g\nQuartiles = %.4g, %.4g', nanmean(val_diff(:)), nanstd(val_diff(:)), nanmedian(val_diff(:)), quantile(val_diff(:), 0.25), quantile(val_diff(:), [0.75]));
+            %stats_text = sprintf('Mean = %.4g\n1\\sigma = %.4g\nMedian = %.4g\nQuartiles = %.4g, %.4g', nanmean(val_diff(:)), nanstd(val_diff(:)), nanmedian(val_diff(:)), quantile(val_diff(:), 0.25), quantile(val_diff(:), [0.75]));
             
             
             fig = figure;
-            hist(val_diff(xx_plot), 100);
-            
-            
-            avg_diff = nanmean(val_diff(:));
-            
+            histstats(val_diff(xx_plot), 100, 'fontsize', 16);
             title(title_str);
             xlabel(x_label_str);
-            set(gca,'fontsize', 16);
-            
-            % Get these after changing the font size because that can
-            % change the limits (in order to make the ticks fit better
-            % visually)
-            x_lim_vals = get(gca,'xlim');
-            y_lim_vals = get(gca,'ylim');
-            
-            l=line([avg_diff, avg_diff], y_lim_vals, 'color', 'r', 'linestyle', '--', 'linewidth', 2);
-            legend(l,{'Mean'});
-            
-            % Put the text near the top left or right corner with a little
-            % space between it and the edge of the plot. Choose the corner
-            % based on which side is further from zero, on the assumption
-            % that the histogram will peak near 0 so going further from 0
-            % gives the text more room.
-            if abs(x_lim_vals(1)) > abs(x_lim_vals(1))
-                text_x = x_lim_vals(1) + 0.02 * diff(x_lim_vals);
-                text_y = y_lim_vals(2) - 0.1 * diff(y_lim_vals);
-                h_align = 'left';
-            else
-                text_x = x_lim_vals(2) - 0.02 * diff(x_lim_vals);
-                % leave a little extra space for the legend on the right
-                % side
-                text_y = y_lim_vals(2) - 0.2 * diff(y_lim_vals);
-                h_align = 'right';
-            end
-            text(text_x, text_y, stats_text, 'verticalalignment', 'top', 'horizontalalignment', h_align, 'fontsize', 10);
         end
         
         function fig = plot_change_avg(old_lon_grid, old_lat_grid, old_val, new_lon_grid, new_lat_grid, new_val, diff_type, title_str, quantity_name, unit_name, save_dir)
@@ -1771,19 +2328,19 @@ classdef misc_behr_update_plots
             if strcmpi(diff_type, 'rel')
                 val_diff = reldiff(new_val, old_val)*100;
                 save_name = sprintf('Relative difference %s', title_str);
-                cb_label = sprintf(tex_in_printf('%%\Delta %s (%s)'), quantity_name, unit_name);
+                cb_label = sprintf(tex_in_printf('%%\Delta %s'), quantity_name);
                 clims = calc_plot_limits(val_diff, 5, 'diff', 'pow10', 'max', [-100 100]);
                 cmap = blue_red_cmap;
             elseif strcmpi(diff_type, 'abs')
                 val_diff = new_val - old_val;
                 save_name = sprintf('Absolute difference %s', title_str);
-                cb_label = sprintf(tex_in_printf('\Delta %s'), quantity_name);
+                cb_label = sprintf(tex_in_printf('\Delta %s (%s)'), quantity_name, unit_name);
                 clims = calc_plot_limits(val_diff, 5, 'diff', 'pow10', 'max', [-Inf Inf]);
                 cmap = blue_red_cmap;
             elseif strcmpi(diff_type, 'none')
                 val_diff = new_val - old_val;
                 save_name = title_str;
-                cb_label = quantity_name;
+                cb_label = sprintf('%s (%s)', quantity_name, unit_name);
                 clims = calc_plot_limits(val_diff, 5, 'zero', 'pow10', 'max', [-Inf Inf]);
                 cmap = parula;
             end
@@ -1813,9 +2370,50 @@ classdef misc_behr_update_plots
             end
         end
         
+        
+        
         %%%%%%%%%%%%%%%%%%%%%%%%%%%
         % Other utility functions %
         %%%%%%%%%%%%%%%%%%%%%%%%%%%
+        
+        function increment_info = get_increment_dirs(comparison_type, profile_type)
+            %inputs: comparison_type must be either 'average' or
+            %'individual'
+            %   profile_type must be 'daily' or 'monthly'
+            
+            % Get all of the directories that would contain average files
+            % or increment data
+            fns = fieldnames(misc_behr_update_plots);
+            data_dirs = {};
+            sort_keys = {};
+            has_daily = [];
+            for a=1:numel(fns)
+                the_dir = misc_behr_update_plots.(fns{a});
+                if contains(the_dir, '/IncrementTests/') && exist(the_dir, 'dir')
+                    [~, sort_keys{end+1}] = fileparts(the_dir);
+                    this_has_daily = exist(fullfile(the_dir, misc_behr_update_plots.daily_mark_file), 'file') > 0;
+                    if strcmpi(comparison_type, 'individual')
+                        if strcmpi(profile_type, 'daily') && this_has_daily
+                            the_dir = fullfile(the_dir, 'DailyProfs');
+                        else
+                            the_dir = fullfile(the_dir, 'MonthlyProfs');
+                        end
+                    end
+                    data_dirs{end+1} = the_dir;
+                    
+                    has_daily(end+1) = this_has_daily;
+                end
+            end
+            
+            % This will sort the data directories in order of their
+            % increment, assuming each one starts with e.g. 0-, 7a-, 7b-.
+            [~, perm_vec] = sort(sort_keys);
+            data_dirs = data_dirs(perm_vec);
+            has_daily = has_daily(perm_vec);
+            
+            increment_names = {'v2.1C','SCDs','MODIS v6', 'Surf. refl. (MODIS C)', 'Surf. refl','Vis. AMF formulation','\chem{NO_2} profiles','Temperature fix','Temperature profiles','Gridding','Ocean LUT/profile time','Variable trop.'};
+            increment_info = struct('dir', data_dirs, 'name', increment_names, 'has_daily', num2cell(has_daily));
+        end
         
         function full_dir = fullpath_incr_dir(dir_in)
             % If it does not start with "/" or "./", then consider it just
@@ -1873,6 +2471,147 @@ classdef misc_behr_update_plots
             else
                 lon_grid = new_lon_grid;
                 lat_grid = new_lat_grid;
+            end
+        end
+        
+        function [lon, lat] = find_n_largest_change_coords(n, del, lon_grid, lat_grid, pos_or_neg, specific_regions)
+            E = JLLErrors;
+            
+            if ~exist('pos_or_neg', 'var')
+                pos_or_neg = 'positive';
+            end
+            if ~exist('specific_regions','var')
+                specific_regions = [];
+            end
+            
+            if strcmpi(pos_or_neg,'positive')
+                sort_dir = 'descend';
+                minmax_fxn = @nanmax;
+            elseif strcmpi(pos_or_neg, 'negative')
+                sort_dir = 'ascend';
+                minmax_fxn = @nanmin;
+            end
+            
+            % sort so that the most positive or negative elements are
+            % first. Put NaNs at the end.
+            [~, perm_vec] = sort(del(:), sort_dir, 'MissingPlacement', 'last');
+            
+            lon = lon_grid(perm_vec(1:n));
+            lat = lat_grid(perm_vec(1:n));
+            
+            % For each region specified, find the lat/lon of the most
+            % positive or negative change within it
+            for i_region = 1:numel(specific_regions)
+                lonlim = specific_regions(i_region).lon;
+                latlim = specific_regions(i_region).lat;
+                in_region = lon_grid > min(lonlim) & lon_grid < max(lonlim) & lat_grid > min(latlim) & lat_grid < max(latlim);
+                biggest_change = minmax_fxn(del(in_region));
+                change_idx = find(abs(del - biggest_change) < 1e-6 & in_region);
+                if ~isscalar(change_idx)
+                    E.callError('multiple_changes_found', 'Found multiple grid cells matching the biggest change')
+                end
+                lon = veccat(lon, lon_grid(change_idx));
+                lat = veccat(lat, lat_grid(change_idx));
+            end
+            
+        end
+        
+        function [old_struct, new_struct]= find_changed_profiles(old_struct, new_struct, old_data, new_data, old_omi, new_omi, target_lon, target_lat, pres_vec, filter)
+            % If only looking for changed profiles and the WRF file is the
+            % same in both then we can stop right now. We want to be a
+            % little careful and compare the WRF file dates rather than the
+            % files themselves, because the file paths might be on the
+            % server or the cluster, might be subsets or not, and might
+            % delimit hours, minutes, and seconds with colons or dashes.
+            E = JLLErrors;
+            
+            if strcmpi(filter, 'changed')
+                old_date = date_from_wrf_filenames(old_data.BEHRWRFFile);
+                new_date = date_from_wrf_filenames(new_data.BEHRWRFFile);
+                if old_date == new_date
+                    return
+                end
+            elseif ~strcmpi(filter, 'all')
+                E.badinput('FILTER must be "all" or "changed"')
+            end
+            
+            % Otherwise, we need to find the pixels that contain the target
+            % lat/lon and get their profiles. 
+            for i=1:numel(new_struct)
+                xx_pix = pixels_overlap_profile(new_data.FoV75CornerLongitude, new_data.FoV75CornerLatitude, target_lon(i), target_lat(i));
+                if sum(xx_pix(:)) == 0
+                    continue
+                end
+                
+                old_tmp_profs = old_data.BEHRNO2apriori(:,xx_pix);
+                old_tmp_pres = old_data.BEHRPressureLevels(:,xx_pix);
+                old_amfs = old_data.BEHRAMFTrop(xx_pix);
+                expanded_fov_area = repmat(old_data.FoV75Area, size(old_data.Longitude,1), 1);
+                old_areaweights = 1 ./ expanded_fov_area(xx_pix);
+                new_tmp_profs = new_data.BEHRNO2apriori(:,xx_pix);
+                new_tmp_pres = new_data.BEHRPressureLevels(:,xx_pix);
+                new_amfs = new_data.BEHRAMFTrop(xx_pix);
+                expanded_fov_area = repmat(old_data.FoV75Area, size(old_data.Longitude,1), 1);
+                new_areaweights = 1 ./ expanded_fov_area(xx_pix);
+                
+                
+                old_interp_profs = nan(numel(pres_vec), sum(xx_pix(:)));
+                new_interp_profs = nan(numel(pres_vec), sum(xx_pix(:)));
+                for i_prof = 1:sum(xx_pix(:))
+                    notnan = ~isnan(old_tmp_profs(:, i_prof));
+                    if sum(notnan) > 1
+                        % need at least two points for interpolation,
+                        % grid cells near the edge are likely centered over
+                        % pixels that are too small sometimes to quite
+                        % reach inside the WRF domain.
+                        old_interp_profs(:, i_prof) = exp( interp1(log(old_tmp_pres(notnan, i_prof)), log(old_tmp_profs(notnan, i_prof)), log(pres_vec)) ) .* old_areaweights(i_prof);
+                    end
+                    notnan = ~isnan(new_tmp_profs(:, i_prof));
+                    if sum(notnan) > 1
+                        new_interp_profs(:, i_prof) = exp( interp1(log(new_tmp_pres(notnan, i_prof)), log(new_tmp_profs(notnan, i_prof)), log(pres_vec)) ) .* new_areaweights(i_prof);
+                    end
+                end
+                
+                % find the grid indicies for the requested lat/lon
+                [~, i_grid] = min(abs(new_omi.Longitude(1,:) - target_lon(i)));
+                [~, j_grid] = min(abs(new_omi.Latitude(:,1) - target_lat(i)));
+                
+                % weighting the profiles is handled in the above for loop -
+                % it was easier than resizing the weights to the same shape
+                % as the profiles.
+                old_struct(i).no2 = nanadd(old_struct(i).no2, nansum2(old_interp_profs, 2));
+                old_struct(i).amf = nanadd(old_struct(i).amf, nansum2(old_amfs .* old_areaweights));
+                old_struct(i).all_amfs = veccat(old_struct(i).all_amfs, old_amfs);
+                old_struct(i).weight = nanadd(old_struct(i).weight + nansum2(old_areaweights));
+                old_struct(i).all_weights = veccat(old_struct(i).all_weights, old_areaweights);
+                
+                old_struct(i).all_grid_vcds = veccat(old_struct(i).all_grid_vcds, old_omi.BEHRColumnAmountNO2Trop(j_grid, i_grid));
+                old_struct(i).all_grid_weights = veccat(old_struct(i).all_grid_weights, old_omi.Areaweight(j_grid, i_grid));
+                
+                new_struct(i).no2 = nanadd(new_struct(i).no2, nansum2(new_interp_profs, 2));
+                new_struct(i).amf = nanadd(new_struct(i).amf, nansum2(new_amfs .* new_areaweights));
+                new_struct(i).all_amfs = veccat(new_struct(i).all_amfs, new_amfs);
+                new_struct(i).weight = nanadd(new_struct(i).weight + nansum2(new_areaweights));
+                new_struct(i).all_weights = veccat(new_struct(i).all_weights, new_areaweights);
+                
+                new_struct(i).all_grid_vcds = veccat(new_struct(i).all_grid_vcds, new_omi.BEHRColumnAmountNO2Trop(j_grid, i_grid));
+                new_struct(i).all_grid_weights = veccat(new_struct(i).all_grid_weights, new_omi.Areaweight(j_grid, i_grid));
+            end
+            
+        end
+        
+        function vars = append_vis_only(vars)
+            % Changes relevant variable names to be the visible-only
+            E = JLLErrors;
+            if ~iscellstr(vars)
+                E.badinput('VARS must be a cell array of strings')
+            end
+            
+            vars_to_change = {'BEHRColumnAmountNO2Trop', 'BEHRAMFTrop'};
+            for i = 1:numel(vars)
+                if ismember(vars{i}, vars_to_change)
+                    vars{i} = strcat(vars{i}, 'VisOnly');
+                end
             end
         end
     end
