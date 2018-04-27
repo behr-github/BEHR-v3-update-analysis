@@ -276,6 +276,7 @@ classdef misc_behr_v3_validation
                 'gc_file_pattern', 'ts_12_14_satellite.%savg.nc',...
                 'gc_file_date_fmt', 'yyyymm',...
                 'prof_extension', extension_mode,...
+                'match_bl_only', 3,...
                 };
             try
                 [all_profs_final, all_profs_detail] = run_insitu_verification(campaign, prof_mode, comparison_params{:});
@@ -389,7 +390,7 @@ classdef misc_behr_v3_validation
             end
         end
         
-        function generate_profile_comparison_struct(do_save)
+        function generate_profile_comparison_struct(varargin)
             % This will generate a structure containing WRF data matched to
             % individual DISCOVER profiles, as well as information about
             % the OMI overpass time vs. the profile time
@@ -402,14 +403,25 @@ classdef misc_behr_v3_validation
             %               nearest OMI overpass (in space) time
             %               match
             
-            % TODO: figure out how to add DC3 to this one. Since it doesn't
-            % have profile numbers.
-            if ~exist('do_save', 'var')
+            p = inputParser;
+            p.addParameter('do_save', nan);
+            % By default, we want to restrict the campaign average profiles
+            % to just the 1.5 hours before or after the standard OMI
+            % overpass of 1:30 pm. 
+            p.addParameter('avg_prof_lst_range', [12, 15]);
+            
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            do_save = pout.do_save;
+            avg_prof_lst_range = pout.avg_prof_lst_range;
+            
+            if isnan(do_save)
                 do_save = ask_yn('Save the resulting match structures?');
             end
             
             profile_types = {'daily', 'monthly', 'v2'};
-            campaigns = {'dc3', 'discover_md', 'discover_ca', 'discover_tx', 'discover_co'};
+            campaigns = {'soas', 'dc3', 'discover_md', 'discover_ca', 'discover_tx', 'discover_co'};
             %campaigns = {'discover_ca'};
             
             % Loop through each campaign, load each merge file, find each
@@ -501,7 +513,7 @@ classdef misc_behr_v3_validation
                 % Match the WRF output to the entire P3 flight
                 for p=1:numel(profile_types)
                     if ~isempty(all_merge_wrf_dirs.(profile_types{p}))
-                        Match = match_wrf2campaigns.(campaigns{a})(profile_types{p}, all_merge_wrf_dirs.(profile_types{p}));
+                        Match = match_wrf2campaigns.(campaigns{a})(profile_types{p}, all_merge_wrf_dirs.(profile_types{p}), 'lst_range', avg_prof_lst_range);
                         profile_comp_struct.(profile_types{p}).(campaigns{a}).All.match = Match;
                     end
                 end
@@ -591,6 +603,8 @@ classdef misc_behr_v3_validation
             % pressure in hPa. dvec must be a vector that gives the date
             % and UTC time as a Matlab datenumber.
             
+            
+            
             % First get all the profile numbers
             profnums = remove_merge_fills(Merge, merge_names.profile_numbers);
             u_profnums = unique(profnums(profnums > 0));
@@ -611,9 +625,11 @@ classdef misc_behr_v3_validation
             end
             AllRaw.dvec = datenum(Merge.metadata.date) + utc ./ (24*60*60);
             
+            data_fns = fieldnames(AllRaw);
+            
             % Now assign the proper subsets to the individual profile
             % fields
-            data_fns = fieldnames(AllRaw);
+            
             for a=1:numel(u_profnums)
                 pp = profnums == u_profnums(a);
                 for b=1:numel(data_fns)
@@ -796,22 +812,25 @@ classdef misc_behr_v3_validation
         
         function varargout = plot_one_insitu_comparison(varargin)
             p = inputParser;
+            p.addOptional('vcd_comp_args', {});
             p.addParameter('extend_method', '');
             p.KeepUnmatched = true;
             
             p.parse(varargin{:});
             pout = p.Results;
+            vcd_comp_args = pout.vcd_comp_args;
             extend_method = pout.extend_method;
             
-            allowed_vars = {'air_no2', 'sp_no2', 'behr_no2'};
+            allowed_vars = {'air_no2_nasa', 'air_no2_behr', 'sp_no2', 'behr_no2'};
             
-            labels = struct('air_no2', 'Aircraft NO_2 VCD (molec. cm^{-2})',...
+            labels = struct('air_no2_nasa', 'Aircraft NO_2 VCD (molec. cm^{-2})',...
+                'air_no2_behr', 'Aircraft NO_2 VCD (molec. cm^{-2})',...
                 'sp_no2', 'NASA NO_2 VCD (molec. cm^{-2})',...
                 'behr_no2', 'BEHR NO_2 VCD (molec. cm^{-2})');
             
             extend_method = misc_behr_v3_validation.get_profile_extend_method(extend_method);
             
-            [fig, fit] = misc_behr_v3_validation.plot_one_vcd_comparison(misc_behr_v3_validation.profile_comp_file(extend_method), allowed_vars, labels, varargin{:});
+            [fig, fit] = misc_behr_v3_validation.plot_one_vcd_comparison(misc_behr_v3_validation.profile_comp_file(extend_method), allowed_vars, labels, vcd_comp_args{:});
             if nargout > 0
                 varargout = {fig, fit};
             end
@@ -841,35 +860,68 @@ classdef misc_behr_v3_validation
         end
         
         function [values, column_names, row_names, section_end_rows ] = tabulate_insitu_comparisons(varargin)
+            E = JLLErrors;
             p = inputParser;
+            p.addParameter('data_source','')
             p.addParameter('campaigns',{});
             p.addParameter('extend_method', '');
             
             p.parse(varargin{:});
             pout = p.Results;
             
+            data_source = pout.data_source;
+            allowed_data_sources = {'aircraft', 'pandora'};
+            if isempty(data_source)
+                data_source = ask_multichoice('Which data source to use?', allowed_data_sources, 'list', true);
+            elseif ~ismember(data_source, allowed_data_sources)
+                E.badinput('DATA_SOURCE must be one of: %s', strjoin(allowed_data_sources, ', '));
+            end
+            
             campaigns = pout.campaigns;
-            extend_method = misc_behr_v3_validation.get_profile_extend_method(pout.extend_method);
-            
-            allowed_vars = {'air_no2', 'sp_no2', 'behr_no2'};
-            
-            labels = struct('air_no2', 'Aircraft NO_2 VCD (molec. cm^{-2})',...
-                'sp_no2', 'NASA NO_2 VCD (molec. cm^{-2})',...
-                'behr_no2', 'BEHR NO_2 VCD (molec. cm^{-2})');
+            if strcmpi(data_source, 'aircraft')
+                extend_method = misc_behr_v3_validation.get_profile_extend_method(pout.extend_method);
+            end
             
             
-            comp_file = misc_behr_v3_validation.profile_comp_file(extend_method);
+            switch lower(data_source)
+                case 'aircraft'
+                    allowed_vars = {'air_no2_nasa', 'air_no2_behr';...
+                        'sp_no2', 'behr_no2'};
+                    
+                    labels = struct('air_no2_nasa', 'Aircraft NO_2 VCD (molec. cm^{-2})',...
+                        'air_no2_behr', 'Aircraft NO_2 VCD (molec. cm^{-2})',...
+                        'sp_no2', 'NASA NO_2 VCD (molec. cm^{-2})',...
+                        'behr_no2', 'BEHR NO_2 VCD (molec. cm^{-2})');
+                    
+                    comp_file = misc_behr_v3_validation.profile_comp_file(extend_method);
+                    time_range = 't1200_1500';
+                case 'pandora'
+                    allowed_vars = {'pandora_no2', 'pandora_no2';...
+                        'sp_no2', 'behr_no2'};
+                    
+                    labels = struct('pandora_no2', 'Pandora total NO_2 VCD (molec. cm^{-2})',...
+                        'sp_no2', 'NASA Trop + Strat NO_2 VCD (molec. cm^{-2})',...
+                        'behr_no2', 'BEHR Trop + NASA Strat NO_2 VCD (molec. cm^{-2})');
+                    
+                    comp_file = misc_behr_v3_validation.pandora_comp_file();
+                    time_range = 't1230_1430';
+                otherwise
+                    E.badinput('data_source == "%s" not supported, may be "aircraft" or "pandora"', data_source);
+            end
+            
+            
+            
             if isempty(campaigns)
                 % Need this to get the available campaigns
                 comp_struct = load(comp_file);
                 campaigns = fieldnames(comp_struct.v2.us_monthly);
             end
             
-            for i_var = 2:3
-                x_var = 'air_no2';
-                y_var = allowed_vars{i_var};
+            for i_var = 1:2
+                x_var = allowed_vars{1, i_var};
+                y_var = allowed_vars{2, i_var};
                 for i_campaign = 1:numel(campaigns)
-                    [fig, fit_substruct] = misc_behr_v3_validation.plot_one_vcd_comparison(comp_file, allowed_vars, labels, x_var, y_var, 'both', campaigns{i_campaign}, 't1200_1500', 'plot_type', 'scatter', 'remove_outliers', true);
+                    [fig, fit_substruct] = misc_behr_v3_validation.plot_one_vcd_comparison(comp_file, allowed_vars(:), labels, x_var, y_var, 'both', campaigns{i_campaign}, time_range, 'plot_type', 'scatter', 'remove_outliers', true);
                     close(fig)
                     fit_data.(y_var).(campaigns{i_campaign}) = fit_substruct;
                 end
@@ -905,6 +957,8 @@ classdef misc_behr_v3_validation
         end
         
     
+        
+        
         function varargout = plot_one_vcd_comparison(comp_file, allowed_vars, labels, x_var, y_var, prof_mode, campaigns, time_range, varargin)
             % This should be called from another method in this class that
             % provides the right comp_file, allowed_vars, and labels.
@@ -1034,8 +1088,10 @@ classdef misc_behr_v3_validation
                 % that doesn't have them
                 for b=1:numel(campaigns)
                     if ~isempty(data_structs{a}.(campaigns{b}).(time_range))
-                        lon = veccat(lon, data_structs{a}.(campaigns{b}).(time_range).profile_lon);
-                        lat = veccat(lat, data_structs{a}.(campaigns{b}).(time_range).profile_lat);
+                        if ~strcmpi(plot_type, 'scatter')
+                            lon = veccat(lon, data_structs{a}.(campaigns{b}).(time_range).profile_lon);
+                            lat = veccat(lat, data_structs{a}.(campaigns{b}).(time_range).profile_lat);
+                        end
                         x_no2 = veccat(x_no2, data_structs{a}.(campaigns{b}).(time_range).(x_var));
                         y_no2 = veccat(y_no2, data_structs{a}.(campaigns{b}).(time_range).(y_var));
                         limits(1) = min([limits(1), min(x_no2), min(y_no2)]);
@@ -1044,8 +1100,10 @@ classdef misc_behr_v3_validation
                 end
                 
                 not_nans = ~isnan(x_no2) & ~isnan(y_no2);
-                lon = lon(not_nans);
-                lat = lat(not_nans);
+                if ~strcmpi(plot_type, 'scatter')
+                    lon = lon(not_nans);
+                    lat = lat(not_nans);
+                end
                 x_no2 = x_no2(not_nans);
                 y_no2 = y_no2(not_nans);
                 
