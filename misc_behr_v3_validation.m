@@ -1026,7 +1026,7 @@ classdef misc_behr_v3_validation
                 E.badinput('TIME_RANGE must be one of the strings: %s', strjoin(allowed_times, ', '));
             end
             
-            allowed_plot_types = {'scatter','map','zonal'};
+            allowed_plot_types = {'scatter','map','zonal','pres top'};
             if isempty(plot_type)
                 plot_type = ask_multichoice('Which type of plot?', allowed_plot_types, 'list', true);
             elseif ~ismember(plot_type, allowed_plot_types)
@@ -1041,8 +1041,8 @@ classdef misc_behr_v3_validation
             
             if regcmpi(x_var, 'behr') || regcmpi(y_var, 'behr')
                 v2_string = 'v2.1C';
-                v3M_string = 'v3.0A (M)';
-                v3D_string = 'v3.0A (D)';
+                v3M_string = 'v3.0B (M)';
+                v3D_string = 'v3.0B (D)';
                 title_product_str = 'BEHR';
             else
                 v2_string = 'v2.1';
@@ -1073,7 +1073,7 @@ classdef misc_behr_v3_validation
             fit_data = struct('P',[],'R2',[],'StdDevM',[],'StdDevB',[],'p_value',[],'x_var', labels.(x_var), 'y_var', labels.(y_var), 'prof_type',legend_strings);
             keep_fit_data = false(size(fit_data));
             
-            if strcmpi(plot_type,'scatter') || strcmpi(plot_type,'zonal')
+            if strcmpi(plot_type,'scatter') || strcmpi(plot_type,'zonal') || strcmpi(plot_type, 'pres top')
                 fig = figure;
             else
                 fig = gobjects(numel(data_structs),1);
@@ -1082,18 +1082,44 @@ classdef misc_behr_v3_validation
             for a=1:numel(data_structs)
                 lon = [];
                 lat = [];
+                meas_pres_top = [];
                 x_no2 = [];
                 y_no2 = [];
                 % TODO: handle if request daily profiles for a campaign
                 % that doesn't have them
                 for b=1:numel(campaigns)
-                    if ~isempty(data_structs{a}.(campaigns{b}).(time_range))
-                        if ~strcmpi(plot_type, 'scatter')
-                            lon = veccat(lon, data_structs{a}.(campaigns{b}).(time_range).profile_lon);
-                            lat = veccat(lat, data_structs{a}.(campaigns{b}).(time_range).profile_lat);
+                    this_struct = data_structs{a}.(campaigns{b}).(time_range);
+                    if ~isempty(this_struct)
+                        try
+                            this_details = match_verify_struct_details(this_struct, this_struct.details);
+                        catch err
+                            % This probably happens because we passed a
+                            % pandora struct that doesn't need to have its
+                            % detail field matched up. As long as the
+                            % details field has the right number of
+                            % entries, and "pandora_no2" is a field, just
+                            % keep the details field as is.
+                            if strcmpi(err.identifier, 'MATLAB:nonExistentField') && isfield(this_struct, 'pandora_no2') && numel(this_struct.details) == numel(this_struct.pandora_no2)
+                                this_details = this_struct.details;
+                            else
+                                rethrow(err)
+                            end
                         end
-                        x_no2 = veccat(x_no2, data_structs{a}.(campaigns{b}).(time_range).(x_var));
-                        y_no2 = veccat(y_no2, data_structs{a}.(campaigns{b}).(time_range).(y_var));
+                        
+                        if ~strcmpi(plot_type, 'scatter')
+                            lon = veccat(lon, this_struct.profile_lon);
+                            lat = veccat(lat, this_struct.profile_lat);
+                        end
+                        if strcmpi(plot_type, 'pres top')
+                            for i_prof = 1:numel(this_details)
+                                i_top = find(this_details(i_prof).is_appended_or_interpolated == 0, 1, 'last');
+                                this_pres_top = this_details(i_prof).binned_pressure(i_top);
+                                meas_pres_top = veccat(meas_pres_top, this_pres_top);
+                            end
+                        end
+                        
+                        x_no2 = veccat(x_no2, this_struct.(x_var));
+                        y_no2 = veccat(y_no2, this_struct.(y_var));
                         limits(1) = min([limits(1), min(x_no2), min(y_no2)]);
                         limits(2) = max([limits(2), max(x_no2), max(y_no2)]);
                     end
@@ -1132,6 +1158,8 @@ classdef misc_behr_v3_validation
                         cb.Label.String = 'molec. cm^{-2}';
                         state_outlines('k','not','ak','hi');
                         set(gca,'fontsize',16);
+                    elseif strcmpi(plot_type, 'pres top')
+                        data_lines(a) = line(meas_pres_top(not_outliers), y_no2(not_outliers) - x_no2(not_outliers), 'linestyle', 'none', 'marker', line_fmts(a).marker, 'color', line_fmts(a).color);
                     else
                         E.notimplemented('Do not know how to make plot type %s', plot_type);
                     end
@@ -1168,6 +1196,13 @@ classdef misc_behr_v3_validation
                 line(x_edges, [0 0], 'linestyle', '--', 'linewidth', 2, 'color', [0.5 0.5 0.5]);
                 legend(data_lines, legend_strings);
                 xlabel('Longitude');
+                ylabel(sprintf('%s - %s', labels.(y_var), labels.(x_var)));
+                set(gca,'fontsize',16);
+            elseif strcmpi(plot_type, 'pres top')
+                x_edges = get(gca,'xlim');
+                line(x_edges, [0 0], 'linestyle', '--', 'linewidth', 2, 'color', [0.5 0.5 0.5]);
+                legend(data_lines, legend_strings);
+                xlabel('Pressure at top measurement');
                 ylabel(sprintf('%s - %s', labels.(y_var), labels.(x_var)));
                 set(gca,'fontsize',16);
             end
