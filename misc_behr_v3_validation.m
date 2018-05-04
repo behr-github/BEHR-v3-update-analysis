@@ -806,6 +806,35 @@ classdef misc_behr_v3_validation
 %             box_vals(box_nans) = [];
 %             box_pres(box_nans) = [];
         end
+        
+        
+        function save_scd_results(filename, results, eval_opts)
+            
+            h5_filename = strrep(filename, 'mat', 'h5');
+            loc_names = {results.loc_name};
+            valid_results = ~cellfun(@isempty, loc_names);
+            results = results(valid_results);
+            save(filename, 'results');
+            
+            for i_res = 1:numel(results)
+                if isempty(results(i_res).loc_name)
+                    continue
+                end
+                
+                sanitized_locname = regexprep(results(i_res).loc_name, '\W', '');
+                this_date = results(i_res).date;
+                misc_behr_v3_validation.scd_subgroup(h5_filename, sprintf('/%s/%s', sanitized_locname, this_date), results(i_res));
+            end
+            
+            description = ['This file contains the locations randomly selected to compare OMI SCDs to WRF VCDs\n',...
+                'to determine how well WRF is capturing the wind fields. The hierarchy is SiteName/Date/<datasets>.\n',...
+                'Each day will have a user value and user confidence field. Confidence ranges from 1 (low) to 3 (high).\n',...
+                'User value will have one of the following numeric values, with its corresponsing meaning:\n\n%s\n\n',...
+                'The BEHR SCDs and WRF monthly and daily VCDs will be included as subgroups with lat/lon coordinates.'];
+            opts_description = sprintfmulti('    %d: %s', num2cell(1:numel(eval_opts)), eval_opts);
+            h5writeatt(h5_filename, '/', 'Description', sprintf(description, strjoin(opts_description, '\n')));
+        end
+        
         %%%%%%%%%%%%%%%%%%%%%%
         % Plotting functions %
         %%%%%%%%%%%%%%%%%%%%%%
@@ -972,11 +1001,15 @@ classdef misc_behr_v3_validation
             p = inputParser;
             p.addParameter('remove_outliers',[]);
             p.addParameter('plot_type','');
+            p.addParameter('color_by','');
+            p.addParameter('match_pandora_aircraft', []);
             p.parse(varargin{:});
             pout = p.Results;
             
             do_remove_outliers = pout.remove_outliers;
             plot_type = pout.plot_type;
+            color_by = pout.color_by;
+            match_pandora_aircraft = pout.match_pandora_aircraft;
             
             comp_struct = load(comp_file);
             
@@ -1033,10 +1066,25 @@ classdef misc_behr_v3_validation
                 E.badinput('plot_type must be one of: %s', strjoin(allowed_plot_types, ', '));
             end
             
+            allowed_color_bys = {'prof_max', 'prof_num', 'none'};
+            if strcmpi(plot_type, 'scatter')
+                if isempty(color_by)
+                    color_by = ask_multichoice('Color the scatter plot by what?', allowed_color_bys, 'list', true);
+                elseif ~ismember(color_by, allowed_color_bys)
+                    E.badinput('color_by must be one of: %s', strjoin(allowed_color_bys), ', ');
+                end
+            end
+            
             if isempty(do_remove_outliers)
                 do_remove_outliers = ask_yn('Remove outliers?');
             elseif ~isscalar(do_remove_outliers) || ~islogical(do_remove_outliers)
                 E.badinput('do_remove_outliers must be a scalar logical')
+            end
+            
+            if isempty(match_pandora_aircraft)
+                match_pandora_aircraft = ask_yn('Only use profiles/sites with both aircraft and Pandora data?');
+            elseif ~isscalar(match_pandora_aircraft) || ~islogical(match_pandora_aircraft)
+                E.badinput('match_pandora_aircraft must be a scalar logical')
             end
             
             if regcmpi(x_var, 'behr') || regcmpi(y_var, 'behr')
@@ -1070,8 +1118,23 @@ classdef misc_behr_v3_validation
             fit_lines = gobjects(numel(data_structs),1);
             fit_legends = cell(size(fit_lines));
             line_fmts = struct('color', {'k','b','r', [0, 0.5, 0]}, 'marker', {'s','x','^','o'});
+            color_labels = struct('prof_max', 'Max [NO_2] (mixing ratio)', 'prof_num', 'Profile number', 'none', '');
             fit_data = struct('P',[],'R2',[],'StdDevM',[],'StdDevB',[],'p_value',[],'x_var', labels.(x_var), 'y_var', labels.(y_var), 'prof_type',legend_strings);
             keep_fit_data = false(size(fit_data));
+            
+            if match_pandora_aircraft
+                % Is what we were given pandora or aircraft data? If the
+                % time range is 12:30 to 14:30, then it's pandora,
+                % otherwise it's aircraft.
+                is_aircraft = ~strcmpi(time_range, 't1230_1430');
+                if is_aircraft
+                    PTmp = load(misc_behr_v3_validation.pandora_comp_file);
+                    pandora = PTmp.v2.us_monthly;
+                else
+                    ATmp = load(misc_behr_v3_validation.profile_comp_file('geos'));
+                    aircraft = ATmp.v2.us_monthly;
+                end
+            end
             
             if strcmpi(plot_type,'scatter') || strcmpi(plot_type,'zonal') || strcmpi(plot_type, 'pres top')
                 fig = figure;
@@ -1085,30 +1148,55 @@ classdef misc_behr_v3_validation
                 meas_pres_top = [];
                 x_no2 = [];
                 y_no2 = [];
+                color_val = [];
                 % TODO: handle if request daily profiles for a campaign
                 % that doesn't have them
                 for b=1:numel(campaigns)
                     this_struct = data_structs{a}.(campaigns{b}).(time_range);
+                    
                     if ~isempty(this_struct)
-                        try
-                            this_details = match_verify_struct_details(this_struct, this_struct.details);
-                        catch err
-                            % This probably happens because we passed a
-                            % pandora struct that doesn't need to have its
-                            % detail field matched up. As long as the
-                            % details field has the right number of
-                            % entries, and "pandora_no2" is a field, just
-                            % keep the details field as is.
-                            if strcmpi(err.identifier, 'MATLAB:nonExistentField') && isfield(this_struct, 'pandora_no2') && numel(this_struct.details) == numel(this_struct.pandora_no2)
-                                this_details = this_struct.details;
+                        if match_pandora_aircraft
+                            if is_aircraft
+                                this_struct = misc_behr_v3_validation.match_aircraft_and_pandora_sites(this_struct, pandora.(campaigns{b}).t1230_1430, 'match_time', true);
                             else
-                                rethrow(err)
+                                [~, this_struct] = misc_behr_v3_validation.match_aircraft_and_pandora_sites(aircraft.(campaigns{b}).t1200_1500, this_struct, 'match_time', true);
+                            end
+                        else
+                            % The matching process already also matches the
+                            % details (in order to be able to cut them down
+                            % with the other fields)
+                            try
+                                this_details = match_verify_struct_details(this_struct, this_struct.details);
+                            catch err
+                                % This probably happens because we passed a
+                                % pandora struct that doesn't need to have its
+                                % detail field matched up. As long as the
+                                % details field has the right number of
+                                % entries, and "pandora_no2" is a field, just
+                                % keep the details field as is.
+                                if strcmpi(err.identifier, 'MATLAB:nonExistentField') && isfield(this_struct, 'pandora_no2') && numel(this_struct.details) == numel(this_struct.pandora_no2)
+                                    this_details = this_struct.details;
+                                else
+                                    rethrow(err)
+                                end
                             end
                         end
                         
                         if ~strcmpi(plot_type, 'scatter')
                             lon = veccat(lon, this_struct.profile_lon);
                             lat = veccat(lat, this_struct.profile_lat);
+                        else
+                            switch lower(color_by)
+                                case 'prof_max'
+                                    color_val = veccat(color_val, max(cat(1,this_details.binned_profile), [], 2));
+                                case 'prof_num'
+                                    profile_numbers = cellfun(@str2double, this_struct.profile_ids);
+                                    color_val = veccat(color_val, profile_numbers);
+                                case 'none'
+                                    % do nothing
+                                otherwise
+                                    E.notimplemented('No method to color by %s', color_by);
+                            end
                         end
                         if strcmpi(plot_type, 'pres top')
                             for i_prof = 1:numel(this_details)
@@ -1141,7 +1229,16 @@ classdef misc_behr_v3_validation
                 
                 if ~isempty(x_no2) && ~isempty(y_no2)
                     if strcmpi(plot_type, 'scatter')
-                        data_lines(a) = line(x_no2(not_outliers), y_no2(not_outliers), 'linestyle', 'none', 'color', line_fmts(a).color, 'marker', line_fmts(a).marker);
+                        if strcmpi(color_by, 'none')
+                            data_lines(a) = line(x_no2(not_outliers), y_no2(not_outliers), 'linestyle', 'none', 'color', line_fmts(a).color, 'marker', line_fmts(a).marker);
+                        else
+                            data_lines(a) = scatter(x_no2(not_outliers), y_no2(not_outliers), [], color_val(not_outliers), line_fmts(a).marker);
+                            if a == 1
+                                cb = colorbar;
+                                cb.Label.String = color_labels.(color_by);
+                            end
+                            hold on
+                        end
                         [fit_x, fit_y, fit_legends{a}, fit_data_tmp] = calc_fit_line(x_no2(not_outliers), y_no2(not_outliers), 'regression', 'RMA', 'xcoord', [-2e16, 2e16]);
                         fit_lines(a) = line(fit_x, fit_y, 'color', line_fmts(a).color, 'linestyle', '--');
                         
@@ -1158,6 +1255,8 @@ classdef misc_behr_v3_validation
                         cb.Label.String = 'molec. cm^{-2}';
                         state_outlines('k','not','ak','hi');
                         set(gca,'fontsize',16);
+                        caxis(calc_plot_limits(y_no2(not_outliers) - x_no2(not_outliers), 'diff'));
+                        colormap(blue_red_only_cmap)
                     elseif strcmpi(plot_type, 'pres top')
                         data_lines(a) = line(meas_pres_top(not_outliers), y_no2(not_outliers) - x_no2(not_outliers), 'linestyle', 'none', 'marker', line_fmts(a).marker, 'color', line_fmts(a).color);
                     else
@@ -1212,7 +1311,116 @@ classdef misc_behr_v3_validation
             end
         end
         
-        function varargout = plot_one_wrf_comparison(prof_types, campaign, prof_number, uncert_type)
+        function plot_aircraft_vs_pandora_locations(varargin)
+            %
+            p = inputParser;
+            p.addParameter('campaigns', {});
+            p.addParameter('time_range', '');
+            
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            campaigns = pout.campaigns;
+            time_range = pout.time_range;
+            
+            pandoras = load(misc_behr_v3_validation.pandora_comp_file());
+            aircraft = load(misc_behr_v3_validation.profile_comp_file('geos'));
+            
+            allowed_campaigns = fieldnames(aircraft.v2.us_monthly);
+            if isempty(campaigns)
+                campaigns = ask_multiselect('Which campaign(s) to plot?', allowed_campaigns);
+            else
+                if ischar(campaigns)
+                    campaigns = {campaigns};
+                elseif ~iscellstr(campaigns)
+                    E.badinput('CAMPAIGN must be a string or cell array of strings')
+                end
+                if any(~ismember(campaigns, allowed_campaigns))
+                    E.badinput('All strings in CAMPAIGN must be one of: %s', strjoin(allowed_campaigns, ', '));
+                end
+            end
+            
+            allowed_times = fieldnames(aircraft.v2.us_monthly.(allowed_campaigns{1}));
+            if isempty(time_range)
+                time_range = ask_multichoice('Which time range to use?', allowed_times, 'list', true);
+            elseif ~ischar(time_range) || ~ismember(time_range, allowed_times)
+                E.badinput('TIME_RANGE must be one of the strings: %s', strjoin(allowed_times, ', '));
+            end
+            
+            aircraft_coords = [];
+            pandora_close_coords = [];
+            pandora_far_coords = [];
+            
+            for i_campaign = 1:numel(campaigns)
+                pandora_comp = pandoras.v3.us_monthly.(campaigns{i_campaign}).t1230_1430;
+                aircraft_comp = aircraft.v3.us_monthly.(campaigns{i_campaign}).(time_range);
+                
+                [~, pandora_close_comp] = misc_behr_v3_validation.match_aircraft_and_pandora_sites(aircraft_comp, pandora_comp);
+                xx_far = ~ismember(pandora_comp.profile_lon, pandora_close_comp.profile_lon) & ~ismember(pandora_comp.profile_lat, pandora_close_comp.profile_lat);
+                
+                aircraft_coords = cat(1, aircraft_coords, [aircraft_comp.profile_lon(:), aircraft_comp.profile_lat(:)]);
+                platlon_far_temp = unique([pandora_comp.profile_lon(xx_far), pandora_comp.profile_lat(xx_far)],'rows');
+                pandora_far_coords = cat(1, pandora_far_coords, platlon_far_temp);
+                platlon_close_temp = unique([pandora_close_comp.profile_lon(:), pandora_close_comp.profile_lat(:)],'rows');
+                pandora_close_coords = cat(1, pandora_close_coords, platlon_close_temp);
+            end
+            
+            figure;
+            l(1) = line(aircraft_coords(:,1), aircraft_coords(:,2), 'marker', 's', 'linestyle', 'none', 'color', 'b');
+            l(2) = line(pandora_far_coords(:,1), pandora_far_coords(:,2), 'marker', 'x', 'linestyle', 'none', 'color', 'r');
+            l(3) = line(pandora_close_coords(:,1), pandora_close_coords(:,2), 'marker', 'x', 'linestyle', 'none', 'color', [0 0.5 0]);
+            state_outlines('k');
+            legend(l(:), {'Aircraft', 'Pandora too far', 'Pandora nearby'});
+        end
+        
+        function [aircraft_comp, pandora_comp] = match_aircraft_and_pandora_sites(aircraft_comp, pandora_comp, varargin)
+            p = inputParser;
+            p.addParameter('match_time', false);
+            p.parse(varargin{:});
+            pout = p.Results;
+            match_time = pout.match_time;
+            
+            aircraft_comp.details = match_verify_struct_details(aircraft_comp, aircraft_comp.details);
+            
+            aircraft_coords = [aircraft_comp.profile_lon(:), aircraft_comp.profile_lat(:)];
+            pandora_coords = [pandora_comp.profile_lon(:), pandora_comp.profile_lat(:)];
+            
+            xx_air = false(size(aircraft_coords,1),1);
+            xx_pandora = false(size(pandora_coords,1),1);
+            distance_crit = 0.05;
+            for i_pan = 1:size(pandora_coords, 1)
+                distances = sqrt((pandora_coords(i_pan, 1) - aircraft_coords(:,1)).^2 + (pandora_coords(i_pan, 2) - aircraft_coords(:,2)).^2);
+                xx_air = xx_air | distances < distance_crit;
+                xx_pandora(i_pan) = any(distances < distance_crit);
+            end
+            
+            if match_time
+                air_dates = cellfun(@(x) datenum(x, 'yyyy-mm-dd'), aircraft_comp.profile_dates);
+                pandora_dates = floor(pandora_comp.omi_time);
+                xx_air = xx_air & ismember(air_dates, pandora_dates);
+                xx_pandora = xx_pandora & ismember(pandora_dates, air_dates);
+            end
+            
+            fns_air = fieldnames(aircraft_comp);
+            for i_air = 1:numel(fns_air)
+                aircraft_comp.(fns_air{i_air}) = aircraft_comp.(fns_air{i_air})(xx_air);
+            end
+            
+            fns_pandora = fieldnames(pandora_comp);
+            for i_pan = 1:numel(fns_pandora)
+                pandora_comp.(fns_pandora{i_pan}) = pandora_comp.(fns_pandora{i_pan})(xx_pandora);
+            end
+        end
+        
+        function varargout = plot_one_wrf_comparison(prof_types, campaign, prof_number, uncert_type, varargin)
+            
+            p = inputParser;
+            p.addParameter('bin_mode','');
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            bin_mode = pout.bin_mode;
+            
             E = JLLErrors;
             wrfcomp = load(misc_behr_v3_validation.wrf_comp_file);
             
@@ -1257,6 +1465,13 @@ classdef misc_behr_v3_validation
                 E.badinput('UNCERT_TYPE must be one of: %s', strjoin(allowed_uncert_types, ', '));
             end
             
+            allowed_bin_modes = {'mean', 'median'};
+            if isempty(bin_mode)
+                bin_mode = ask_multichoice('How to bin the profiles?', allowed_bin_modes, 'default', 'mean', 'list', true);
+            elseif ~ismember(bin_mode, allowed_bin_modes)
+                E.badinput('BIN_MODE must be one of: %s', strjoin(allowed_bin_modes, ', '));
+            end
+            
             % Do the actual plotting. First get each profile type's raw
             % data, and bin it to give the average shape. Convert from ppm
             % to ppt (hence the 1e6)
@@ -1266,12 +1481,12 @@ classdef misc_behr_v3_validation
                     % types
                     no2.aircraft = wrfcomp.(prof_types{a}).(campaign).(prof_number).match.data.no2*1e6;
                     pres.aircraft = wrfcomp.(prof_types{a}).(campaign).(prof_number).match.data.pres;
-                    [binned_no2.aircraft, binned_pres.aircraft, binned_no2_std.aircraft] = bin_omisp_pressure(pres.aircraft, no2.aircraft, 'mean');
+                    [binned_no2.aircraft, binned_pres.aircraft, binned_no2_std.aircraft] = bin_omisp_pressure(pres.aircraft, no2.aircraft, bin_mode);
                 end
                 
                 no2.(prof_types{a}) = wrfcomp.(prof_types{a}).(campaign).(prof_number).match.wrf.no2*1e6;
                 pres.(prof_types{a}) = wrfcomp.(prof_types{a}).(campaign).(prof_number).match.wrf.pres;
-                [binned_no2.(prof_types{a}), binned_pres.(prof_types{a}), binned_no2_std.(prof_types{a})] = bin_omisp_pressure(pres.(prof_types{a}), no2.(prof_types{a}), 'mean');
+                [binned_no2.(prof_types{a}), binned_pres.(prof_types{a}), binned_no2_std.(prof_types{a})] = bin_omisp_pressure(pres.(prof_types{a}), no2.(prof_types{a}), bin_mode);
             end
             
             % We'll always use the same colors for the various profile
@@ -1287,7 +1502,11 @@ classdef misc_behr_v3_validation
                     line(no2.(fns{a}), pres.(fns{a}), 'linestyle', 'none', 'marker', '.', 'color', plt_cols.(fns{a}).raw);
                 end
                 if any(strcmpi(uncert_type, {'std', 'both'}))
-                    scatter_errorbars(binned_no2.(fns{a}), binned_pres.(fns{a}), binned_no2_std.(fns{a}), 'color', plt_cols.(fns{a}).avg, 'direction', 'x');
+                    if strcmpi(bin_mode, 'mean')
+                        scatter_errorbars(binned_no2.(fns{a}), binned_pres.(fns{a}), binned_no2_std.(fns{a}), 'color', plt_cols.(fns{a}).avg, 'direction', 'x');
+                    else
+                        scatter_errorbars(binned_no2.(fns{a}), binned_pres.(fns{a}), binned_no2_std.(fns{a})(1,:), binned_no2_std.(fns{a})(2,:), 'color', plt_cols.(fns{a}).avg, 'direction', 'x');
+                    end
                 end
                 
                 l(a) = line(binned_no2.(fns{a}), binned_pres.(fns{a}), 'color', plt_cols.(fns{a}).avg, 'linewidth', 2);
@@ -1298,6 +1517,7 @@ classdef misc_behr_v3_validation
             set(gca,'ydir','reverse','fontsize',14);
             xlabel('[NO_2] (pptv)');
             ylabel('Pressure (hPa)');
+            title(prof_number);
             
             if nargout > 0
                 varargout{1} = fig;
@@ -1537,7 +1757,7 @@ classdef misc_behr_v3_validation
             end
         end
         
-        function plot_scd_vs_wrf_columns(location_name, start_date, end_date)
+        function varargout = plot_scd_vs_wrf_columns(location_name, start_date, end_date)
             % Plots OMI tropospheric SCDs, WRF monthly, and WRF daily
             % columns for a given date range to show whether WRF is
             % capturing the wind direction correctly. If daily BEHR files
@@ -1607,6 +1827,13 @@ classdef misc_behr_v3_validation
                         line(plot_loc.Longitude, plot_loc.Latitude, 'linestyle', 'none', 'marker', 'p', 'color', 'w', 'markersize',16,'linewidth',2);
                         set(gca,'fontsize',14);
                     end
+                end
+                
+                if nargout > 0
+                    if numel(dvec) > 1
+                        E.notimplemented('Returning data when >1 day requested');
+                    end
+                    varargout = {behr_daily, wrf_monthly, wrf_daily};
                 end
             end
         end
@@ -1731,7 +1958,7 @@ classdef misc_behr_v3_validation
             results = repmat(results, nsites*ndays, 1);
             
             eval_opts = {'Daily - good agreement with SCD', 'Daily - bad agreement with SCD', 'Similar to monthly - good agreement with SCD', 'Similar to monthly - bad agreement with SCD', 'Not enough data'};
-            ned_ind = 5; % index for "Not enough data", if this is the response, we don't want to store the result.
+            ned_ind = numel(eval_opts); % index for "Not enough data", if this is the response, we don't want to store the result. Should always be the last one.
             for a=1:nsites
                 % Make a copy so that we can remove days as we test them
                 isite = randi(numel(locs), 1);
@@ -1739,14 +1966,14 @@ classdef misc_behr_v3_validation
                 b = 1;
                 while b <= ndays && ~isempty(site_dvec)
                     idate = randi(numel(site_dvec), 1);
-                    misc_behr_v3_validation.plot_scd_vs_wrf_columns(locs(isite).ShortName, site_dvec(idate), site_dvec(idate));
+                    [behr, wrf_monthly, wrf_daily] = misc_behr_v3_validation.plot_scd_vs_wrf_columns(locs(isite).ShortName, site_dvec(idate), site_dvec(idate));
                     try
                         user_ans = ask_multichoice('Evaluate this day', eval_opts, 'list', true, 'index', true);
                     catch err
                         if strcmp(err.identifier, 'ask_multichoice:user_cancel')
                             % If we cancel the work, save the results
                             % completed so far.
-                            save(misc_behr_v3_validation.scd_comp_file(true), 'results');
+                            misc_behr_v3_validation.save_scd_results(misc_behr_v3_validation.scd_comp_file(true), results, eval_opts(1:end-1));
                             return
                         else
                             rethrow(err)
@@ -1769,9 +1996,14 @@ classdef misc_behr_v3_validation
                     iresult = sub2ind([ndays, nsites], b, a);
                     results(iresult).loc_name = locs(isite).ShortName;
                     results(iresult).date = datestr(this_date);
+                    results(iresult).loc_longitude = locs(isite).Longitude;
+                    results(iresult).loc_latitude = locs(isite).Latitude;
                     results(iresult).user_value = user_ans;
                     results(iresult).user_note = input('Enter a note if you wish: ', 's');
                     results(iresult).user_confidence = confidence;
+                    results(iresult).behr_data = behr;
+                    results(iresult).wrf_monthly = wrf_monthly;
+                    results(iresult).wrf_daily = wrf_daily;
                     b = b + 1;
                     fprintf('%d of %d completed...\n', iresult, nsites*ndays);
                 end
@@ -1779,11 +2011,11 @@ classdef misc_behr_v3_validation
                 locs(isite) = [];
                 
             end
-            
-            save(misc_behr_v3_validation.scd_comp_file, 'results');
+
+            misc_behr_v3_validation.save_scd_results(misc_behr_v3_validation.scd_comp_file, results, eval_opts(1:end-1));
         end
         
-        function calculate_wrf_behr_correlation(locations, start_date, end_date)
+        function calculate_wrf_behr_correlation(varargin)
             % The idea of this function is to compute the correlation
             % between BEHR SCDs and WRF monthly and daily VCDs, to see if
             % the daily profiles provide better correlation than the
@@ -1792,7 +2024,19 @@ classdef misc_behr_v3_validation
             % record_scd_comparison().
             E = JLLErrors;
             
-            if ~exist('locations', 'var')
+            p = inputParser;
+            p.addParameter('locations', []);
+            p.addParameter('start', '');
+            p.addParameter('end', '');
+            
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            locations = pout.locations;
+            start_date = pout.start;
+            end_date = pout.end;
+            
+            if isempty(locations)
                 locations = misc_behr_v3_validation.read_locs_file();
                 loc_inds = ask_multiselect('Select which city(ies) to test', {locations.ShortName}, 'returnindex', true);
                 locations = locations(loc_inds);
@@ -1800,13 +2044,13 @@ classdef misc_behr_v3_validation
                 E.badinput('LOCATIONS must be the struct returned by misc_behr_v3_validation.read_locs_file, or a subset of it');
             end
             
-            if ~exist('start_date', 'var')
+            if isempty(start_date)
                 start_date = datenum(ask_date('Enter the first date to test'));
             else
                 start_date = validate_date(start_date);
             end
             
-            if ~exist('end_date', 'var')
+            if isempty(end_date)
                 end_date = datenum(ask_date('Enter the last date to test'));
             else
                 end_date = validate_date(end_date);
@@ -1824,6 +2068,47 @@ classdef misc_behr_v3_validation
                 end
             end
             
+        end
+    end
+    
+    methods(Static = true, Access = private)
+        function scd_subgroup(h5_filename, group_name, results)
+            E = JLLErrors;
+            % Make sure group name does NOT end in a slash to avoid double
+            % slashes in the name when we join it with the dataset
+            if ~isscalar(results) || ~isstruct(results)
+                E.badinput('RESULTS must be a scalar struct')
+            end
+            group_name = regexprep(group_name, '/$', '');
+            deferred_fields = {};
+            fns = fieldnames(results);
+            n_fields = numel(fns);
+            for i_fn = 1:n_fields
+                this_field = fns{i_fn};
+                this_data = results.(this_field);
+                dset_name = strjoin({group_name, this_field}, '/');
+                if isnumeric(this_data) || iscell(this_data)
+                    if iscell(this_data)
+                        this_data = cat_cell_contents(this_data);
+                    end
+                    sz = size(this_data);
+                    h5create(h5_filename, dset_name, sz);
+                    h5write(h5_filename, dset_name, this_data);
+                elseif ischar(this_data)
+                    deferred_fields{end+1} = this_field; %#ok<AGROW>
+                elseif isstruct(this_data)
+                    if ~isstruct(this_data)
+                        E.notimplemented('Non-scalar substructure')
+                    end
+                    misc_behr_v3_validation.scd_subgroup(h5_filename, dset_name, this_data);
+                end
+            end
+            
+            for i_fn = 1:numel(deferred_fields)
+                this_field = deferred_fields{i_fn};
+                this_attr = results.(this_field);
+                h5writeatt(h5_filename, group_name, this_field, this_attr);
+            end
         end
     end
     

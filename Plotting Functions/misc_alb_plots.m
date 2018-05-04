@@ -7,7 +7,7 @@ classdef misc_alb_plots
         black_sky_dir = '/Volumes/share-sat/SAT/BEHR/AlbedoTestBRDF/BlackSky';
         brdf_dir = '/Volumes/share-sat/SAT/BEHR/AlbedoTestBRDF/BRDF';
         brdf_flip_dir = '/Volumes/share-sat/SAT/BEHR/AlbedoTestBRDF/BRDF_tomradRAA';
-        workspace_dir = fullfile(behr_repo_dir, 'Workspaces', 'BRDF Albedo');
+        workspace_dir = fullfile(behr_paths.behr_core, 'Workspaces', 'BRDF Albedo');
         
         mcd43c1_dir = '/Volumes/share-sat/SAT/MODIS/MCD43C1';
         mcd43c3_dir = '/Volumes/share-sat/SAT/MODIS/MCD43C3/v006';
@@ -313,6 +313,38 @@ classdef misc_alb_plots
                             error('misc_alb_plots:not_implemented', 'Color by %s not implemented', colorby);
                     end
                 end
+            end
+            
+            % Print the slopes and their standard deviations by bin
+            switch lower(colorby)
+                case 'none'
+                    bin_edges = [-1 1];
+                case 'site'
+                    bin_edges = 1:(numel(loc_names)+1);
+                case 'sitetype'
+                    bin_edges = 1:4;
+                case 'month'
+                    bin_edges = 1:13;
+                case 'sza'
+                    bin_edges = 0:10:100;
+                case 'vza'
+                    bin_edges = 0:10:100;
+                case 'raa'
+                    bin_edges = 0:10:180;
+                case 'longitude'
+                    bin_edges = -125:5:-65;
+                case 'latitude'
+                    bin_edges = 25:5:50;
+                otherwise
+                    error('misc_alb_plots:not_implemented', 'Binning %s not implemented', colorby);
+            end
+            
+            [alb_bins, bin_centers] = bin_data(color_vals, modis_albs(:), bin_edges);
+            ler_bins = bin_data(color_vals, modis_lers(:), bin_edges);
+            
+            for i_bin = 1:numel(bin_centers)
+                [~,~,~,fit] = calc_fit_line(alb_bins{i_bin}, ler_bins{i_bin}, 'regression', 'rma');
+                fprintf('Slope for %s bin centered on %f = %f +/- %f\n', colorby, bin_centers(i_bin), fit.P(1), fit.StdDevM);
             end
             
             f1 = figure;
