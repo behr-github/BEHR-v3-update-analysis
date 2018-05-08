@@ -1026,6 +1026,53 @@ classdef misc_behr_v3_validation
             end
         end
         
+        function plot_sites(ax, varargin)
+            p = inputParser;
+            p.addParameter('site_type', 'all')
+            
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            site_type = pout.site_type;
+            
+            locs = misc_behr_v3_validation.read_locs_file;
+            if ~strcmpi(site_type, 'all')
+                xx = strcmpi({locs.SiteType}, site_type);
+                locs = locs(xx);
+            end
+            
+            x = [locs.Longitude];
+            y = [locs.Latitude];
+            names = {locs.ShortName};
+            
+            % Add a few extra cities
+            x = veccat(x, -86.8025);
+            y = veccat(y, 33.5207);
+            names = veccat(names, {'Birmingham'});
+            
+            % Control which ones should be aligned right instead to avoid 
+            % overlapping names
+            sites_align_right = {'Birmingham'};
+            
+            x_lims = get(ax, 'XLim');
+            y_lims = get(ax, 'YLim');
+            
+            % Text will get printed outside the axes if we don't cut it
+            % down
+            in_lims = x > x_lims(1) & x < x_lims(2) - 0.5 & y > y_lims(1) + 0.25 & y < y_lims(2) - 0.25;
+            x = x(in_lims);
+            y = y(in_lims);
+            names = names(in_lims);
+            
+            % Anything too close to the right side of the map will need
+            % it's text put on the left instead of the right
+            %align_right = x > x_lims(2) - diff(x_lims) * 0.2;
+            align_right = ismember(names, sites_align_right);
+            line(x, y, 'marker', 'p', 'color', 'k', 'linestyle', 'none');
+            text(x(~align_right)+0.25, y(~align_right), names(~align_right), 'BackgroundColor', 'w');
+            text(x(align_right)-0.25, y(align_right), names(align_right),  'BackgroundColor', 'w', 'HorizontalAlignment', 'right');
+        end
+        
         %%%%%%%%%%%%%%%%%%%%%%
         % Plotting functions %
         %%%%%%%%%%%%%%%%%%%%%%
@@ -1040,11 +1087,33 @@ classdef misc_behr_v3_validation
             misc_behr_v3_validation.plot_one_vcd_comparison(misc_behr_v3_validation.gcas_vec_comp_file, allowed_vars, labels, varargin{:});
         end
         
-        function [values, column_names, row_names, section_end_rows ] = tabulate_insitu_comparisons(varargin)
+        function [values, column_names, row_names, section_end_rows, fit_data ] = tabulate_insitu_comparisons(varargin)
+            % Create a table of slopes, intercepts, and R2 values for sat
+            % vs. aircraft or pandora comparisons.
+            %
+            % The follow parameters allow you to bypass the interactive
+            % questions:
+            %
+            %   'data_source' - either 'aircraft' or 'pandora'; indicates
+            %   which data set to compare sat columns against
+            %
+            %   'campaigns' - cell array of strings indicating which
+            %   campaigns to include.
+            %
+            %   'remove_neg_vcd' - whether or not to remove negative
+            %   satellite VCDs. Can either be a scalar logical (in which
+            %   case it will apply to all campaigns) or a logical array the
+            %   same size as 'campaigns', in which case you can specify
+            %   which campaigns to remove negative VCDs for.
+            %
+            %   'extend_method' - 'wrf', 'geos', or 'extrap'; only useful
+            %   if 'data_source' is 'aircraft' as it controls how the
+            %   aircraft profiles are extended to surface and tropopause.
             E = JLLErrors;
             p = inputParser;
             p.addParameter('data_source','')
             p.addParameter('campaigns',{});
+            p.addParameter('remove_neg_vcd', []);
             p.addParameter('extend_method', '');
             
             p.parse(varargin{:});
@@ -1058,9 +1127,16 @@ classdef misc_behr_v3_validation
                 E.badinput('DATA_SOURCE must be one of: %s', strjoin(allowed_data_sources, ', '));
             end
             
+            
             campaigns = pout.campaigns;
             extend_method = pout.extend_method;
             
+            remove_neg_vcd = opt_ask_yn('Remove negative VCDs?', pout.remove_neg_vcd, '"remove_neg_vcd"',...
+                'test_fxn', @(x) islogical(x) && (isscalar(x) || numel(x) == numel(campaigns)),...
+                'test_msg', '%s must be a logical array, either scalar or the same size as "campaigns"');
+            if isscalar(remove_neg_vcd)
+                remove_neg_vcd = repmat(remove_neg_vcd, size(campaigns));
+            end
             
             switch lower(data_source)
                 case 'aircraft'
@@ -1086,15 +1162,15 @@ classdef misc_behr_v3_validation
             end
             
             common_opts = {'data_source', data_source, 'extend_method', extend_method, 'prof_mode', 'both', 'version', 'both', 'time_range', time_range, 'remove_outliers', true, 'plot_type', 'scatter',...
-                'color_by', 'none', 'remove_neg_sat', false, 'match_pandora_aircraft', false};
+                'color_by', 'none', 'match_pandora_aircraft', false};
             
             for i_var = 1:2
                 x_var = allowed_vars{1, i_var};
                 y_var = allowed_vars{2, i_var};
                 for i_campaign = 1:numel(campaigns)
-                    [fig, fit_substruct] = misc_behr_v3_validation.plot_one_vcd_comparison('campaigns', campaigns{i_campaign}, 'x_var', x_var, 'y_var', y_var, common_opts{:});
+                    [fig, fit_substruct] = misc_behr_v3_validation.plot_one_vcd_comparison('campaigns', campaigns{i_campaign}, 'x_var', x_var, 'y_var', y_var, 'remove_neg_sat', remove_neg_vcd(i_campaign), common_opts{:});
                     close(fig)
-                    fit_data.(y_var).(campaigns{i_campaign}) = fit_substruct;
+                    fit_data.(y_var){i_campaign} = fit_substruct;
                 end
             end
             
@@ -1112,10 +1188,15 @@ classdef misc_behr_v3_validation
             products = {'sp_no2','behr_no2'};
             product_table_names = {'SP','BEHR'};
             for i_campaign = 1:numel(campaigns)
+                if remove_neg_vcd(i_campaign)
+                    vcd_str = ' (V > 0)';
+                else
+                	vcd_str = '';
+                end
                 for i_prod = 1:numel(products)
-                    substruct = fit_data.(products{i_prod}).(campaigns{i_campaign});
+                    substruct = fit_data.(products{i_prod}){i_campaign};
                     for i_sub = 1:numel(substruct)
-                        this_row_names = {upper(strrep(campaigns{i_campaign},'_', '-')), sprintf('%s %s', product_table_names{i_prod}, substruct(i_sub).prof_type)};
+                        this_row_names = {sprintf('%s%s', upper(strrep(campaigns{i_campaign},'_', '-')), vcd_str), sprintf('%s %s', product_table_names{i_prod}, substruct(i_sub).prof_type)};
                         this_row_values = [substruct(i_sub).P(1), substruct(i_sub).P(2), substruct(i_sub).R2];
                         row_names = cat(1, row_names, this_row_names);
                         values = cat(1, values, this_row_values);
@@ -1199,7 +1280,7 @@ classdef misc_behr_v3_validation
             fit_legends = cell(size(fit_lines));
             line_fmts = struct('color', {'k','b','r', [0, 0.5, 0]}, 'marker', {'s','x','^','o'});
             color_labels = struct('prof_max', 'Max [NO_2] (mixing ratio)', 'prof_num', 'Profile number', 'none', '');
-            fit_data = struct('P',[],'R2',[],'StdDevM',[],'StdDevB',[],'p_value',[], 'is_significant', [],'x_var', labels.x, 'y_var', labels.y, 'prof_type',legend_strings);
+            fit_data = struct('P',[],'R2',[],'StdDevM',[],'StdDevB',[],'p_value',[], 'num_pts', [], 'is_significant', [], 'x_var', labels.x, 'y_var', labels.y, 'prof_type',legend_strings);
             keep_fit_data = false(size(fit_data));
             
             if match_pandora_aircraft
@@ -1340,11 +1421,13 @@ classdef misc_behr_v3_validation
                         %set(gca,'xlimmode','manual');
                         title(sprintf('%s - %s: %s', labels.(y_var), labels.(x_var), legend_strings{a}));
                         cb = colorbar;
-                        cb.Label.String = 'molec. cm^{-2}';
+                        cb.Label.String = '\Delta VCD (molec. cm^{-2})';
                         state_outlines('k','not','ak','hi');
                         set(gca,'fontsize',16);
                         caxis(calc_plot_limits(y_no2(xx_keep) - x_no2(xx_keep), 'diff'));
                         colormap(blue_red_only_cmap)
+                        
+                        misc_behr_v3_validation.plot_sites(gca, 'site_type', 'Cities');
                     elseif strcmpi(plot_type, 'pres top')
                         data_lines(a) = line(meas_pres_top(xx_keep), y_no2(xx_keep) - x_no2(xx_keep), 'linestyle', 'none', 'marker', line_fmts(a).marker, 'color', line_fmts(a).color);
                     else
@@ -1991,6 +2074,8 @@ classdef misc_behr_v3_validation
             set(gca,'XTickLabel',labels,'ygrid','on');
             ylabel('%\Delta Surf. P. (hPa, BEHR - WRF)');
         end
+        
+        
         %%%%%%%%%%%%%%%%%%%%%%
         % Analysis functions %
         %%%%%%%%%%%%%%%%%%%%%%
