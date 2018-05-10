@@ -1889,52 +1889,92 @@ classdef misc_behr_v3_validation
             end
         end
         
-        function varargout = plot_scd_vs_wrf_columns(location_name, start_date, end_date)
+        function varargout = plot_scd_vs_wrf_columns(location_name, start_date, end_date, varargin)
             % Plots OMI tropospheric SCDs, WRF monthly, and WRF daily
             % columns for a given date range to show whether WRF is
             % capturing the wind direction correctly. If daily BEHR files
             % do not exist for a date in the range given, that day will
             % just be skipped.
-            locs = misc_behr_v3_validation.read_locs_file();
-            loc_names = {locs.ShortName};
-            if ~exist('location_name', 'var')
-                loc_ind = ask_multichoice('Choose a location', loc_names, 'list', true, 'index', true);
-            elseif ~ismember(location_name, loc_names)
-                E.badinput('LOCATION_NAME must be one of: %s', strjoin(loc_names, ', '));
-            else
-                loc_ind = strcmpi(location_name, loc_names);
+            
+            E = JLLErrors;
+            p = inputParser;
+            p.addParameter('max_frac_nans', 0);
+            
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            max_frac_nans = pout.max_frac_nans;
+            
+            if nargin == 2
+                E.badinput('Must give 0, 1, or >= 3 inputs')
             end
             
-            plot_loc = locs(loc_ind);
-            
-            if ~exist('start_date', 'var')
-                start_date = datenum(ask_date('Enter the start date'));
-            else
-                start_date = validate_date(start_date);
+            if nargin == 0 || nargin >= 3
+                locs = misc_behr_v3_validation.read_locs_file();
+                loc_names = {locs.ShortName};
+                if ~exist('location_name', 'var')
+                    loc_ind = ask_multichoice('Choose a location', loc_names, 'list', true, 'index', true);
+                elseif ~ismember(location_name, loc_names)
+                    E.badinput('LOCATION_NAME must be one of: %s', strjoin(loc_names, ', '));
+                else
+                    loc_ind = strcmpi(location_name, loc_names);
+                end
+                
+                plot_loc = locs(loc_ind);
+                
+                if ~exist('start_date', 'var')
+                    start_date = datenum(ask_date('Enter the start date'));
+                else
+                    start_date = validate_date(start_date);
+                end
+                
+                if ~exist('end_date', 'var')
+                    end_date = datenum(ask_date('Enter the end date'));
+                else
+                    end_date = validate_date(end_date);
+                end
+                
+                dvec = start_date:end_date;
+                load_data = true;
+            elseif nargin == 1
+                % if given one input, it must be a structure of results
+                if ~isstruct(location_name)
+                    E.badinput('With one input, it must be a structure of results')
+                end
+                results = location_name;
+                dvec = 1:numel(results);
+                load_data = false;
             end
-            
-            if ~exist('end_date', 'var')
-                end_date = datenum(ask_date('Enter the end date'));
-            else
-                end_date = validate_date(end_date);
-            end
-            
-            dvec = start_date:end_date;
             
             for d=1:numel(dvec)
                 % Load the daily BEHR file, if it exists
-                try
-                    [behr_daily, wrf_monthly, wrf_daily] = misc_behr_v3_validation.load_wrf_and_behr_data(plot_loc, dvec(d));
-                catch err
-                    if strcmp(err.identifier, 'MATLAB:load:couldNotReadFile')
-                        fprintf('No BEHR daily profile file available for %s\n', datestr(dvec(d)));
-                        continue
-                    else
-                        rethrow(err)
+                if load_data
+                    try
+                        [behr_daily, wrf_monthly, wrf_daily] = misc_behr_v3_validation.load_wrf_and_behr_data(plot_loc, dvec(d));
+                    catch err
+                        if strcmp(err.identifier, 'MATLAB:load:couldNotReadFile')
+                            fprintf('No BEHR daily profile file available for %s\n', datestr(dvec(d)));
+                            continue
+                        else
+                            rethrow(err)
+                        end
                     end
+                else
+                    behr_daily = results(d).behr_data;
+                    wrf_monthly = results(d).wrf_monthly;
+                    wrf_daily = results(d).wrf_daily;
+                    plot_loc.Longitude = results(d).loc_longitude;
+                    plot_loc.Latitude = results(d).loc_latitude;
                 end
                 
+                xx_keep = true(size(behr_daily));
+                
                 for a=1:numel(behr_daily.lon)
+                    if fracnan(behr_daily.no2_scds{1}) > max_frac_nans
+                        xx_keep(a) = false;
+                        continue
+                    end
+                    
                     % Make the plot, 3 side-by-side figures
                     fig=figure;
                     fig.Position(3) = fig.Position(3)*2;
@@ -1959,6 +1999,11 @@ classdef misc_behr_v3_validation
                         line(plot_loc.Longitude, plot_loc.Latitude, 'linestyle', 'none', 'marker', 'p', 'color', 'w', 'markersize',16,'linewidth',2);
                         set(gca,'fontsize',14);
                     end
+                end
+                
+                fns = fieldnames(behr_daily);
+                for i_fn = 1:numel(fns)
+                    behr_daily.(fns{i_fn})(~xx_keep) = [];
                 end
                 
                 if nargout > 0
@@ -2075,7 +2120,143 @@ classdef misc_behr_v3_validation
             ylabel('%\Delta Surf. P. (hPa, BEHR - WRF)');
         end
         
-        
+        function fig = plot_uncertainty_estimate(varargin)
+            E = JLLErrors;
+            
+            p = inputParser;
+            p.addParameter('titles', true);
+            p.addParameter('region', 'us');
+            p.addParameter('change_field', '')
+            
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            include_titles = pout.titles;
+            region = pout.region;
+            change_field = opt_ask_multichoice('Which field to plot?', {'PercentChangeNO2', 'PercentChangeNO2Vis', 'PercentChangeAMF', 'PercentChangeAMFVis'}, pout.change_field, '"change_field"', 'list', true);
+            
+            % First we need to get what uncertainty parameters are
+            % available and for which months. The months should be the same
+            % for all parameters. We'll load the uncertainty at the same
+            % time
+            
+            F = dir(behr_paths.BEHRUncertSubdir(region));
+            uncert_params = {F([F.isdir]).name};
+            % Need to remove . and ..
+            uncert_params(regcmp(uncert_params, '\.+')) = [];
+            
+            % Assume for now that there's four month of uncertainty
+            uncertainties = make_empty_struct_from_cell(uncert_params);
+            
+            
+            
+            for i_param = 1:numel(uncert_params)
+                fprintf('Loading %s files: ', uncert_params{i_param});
+                
+                uncert_files = dirff(fullfile(behr_paths.BEHRUncertSubdir(region), uncert_params{i_param}, 'BEHR*.mat'));
+                file_dates = cellfun(@(x) datenum(regexp(x, '\d{6}(?=.mat)', 'match', 'once'), 'yyyymm'), {uncert_files.name});
+                if i_param == 1
+                    check_file_dates = file_dates;
+                elseif ~isequal(file_dates, check_file_dates)
+                    E.notimplemented('Different parameters produced for different months');
+                end
+                
+                substruct = make_empty_struct_from_cell({'date', 'percent_diff'}, cell(size(uncert_files)));
+                
+                for i_file = 1:numel(uncert_files)
+                    UAvg = load(uncert_files(i_file).name);
+                    ErrorAvg = UAvg.ErrorAvg;
+                    
+                    fprintf('%d ', i_file);
+                    
+                    substruct(i_file).date = file_dates(i_file);
+                    if numel(ErrorAvg) == 1
+                        perdiff = ErrorAvg.(change_field);
+                    elseif numel(ErrorAvg) == 2
+                        perdiff = (ErrorAvg(2).(change_field) - ErrorAvg(1).(change_field))./2;
+                    else
+                        E.notimplemented('numel(ErrorAvg) > 2')
+                    end
+                    % Sometime the perturbation produces an absurdly high
+                    % uncertainty. Restrict to 3 sigma.
+                    %perdiff(abs(perdiff) > 3*nanstd(perdiff)) = nan;
+                    substruct(i_file).percent_diff = perdiff;
+                end
+                uncertainties.(uncert_params{i_param}) = substruct;
+                fprintf('\n');
+            end
+            
+            % Now we want to plot the quadrature sum of all contributions
+            % to the uncertainty for each month, and a plot of the average
+            % contribution of each component. For plotting, will have to
+            % assume that lat/lon is the same as the normal BEHR grid
+            [~, OMI] = load_behr_file('2012-01-01', 'monthly', region);
+            lon = OMI(1).Longitude;
+            lat = OMI(1).Latitude;
+            
+            n_months = numel(check_file_dates);
+            n_params = numel(uncert_params);
+            
+            median_contributions = nan(n_months, n_params+1);
+            contribution_quantiles = nan([2,size(median_contributions)]);
+            mean_contributions = nan(size(median_contributions));
+            contribution_sigmas = nan(size(median_contributions));
+            
+            fig = figure;
+            fig.Position(3:4) = [2 3] .* fig.Position(3:4);
+            
+            if n_months ~= 4
+                E.notimplemented('# of months ~= 4');
+            end
+            for i_month = 1:n_months
+                pAvg = RunningAverage();
+                for i_param = 1:n_params
+                    this_struct = uncertainties.(uncert_params{i_param})(i_month);
+                    if this_struct.date ~= check_file_dates(i_month)
+                        E.callError('wrong_date', 'Dates in substruct out of order compared to what was expected')
+                    end
+                    pAvg.addData((this_struct.percent_diff).^2);
+                    mean_contributions(i_month, i_param) = abs(nanmean(this_struct.percent_diff(:)));
+                    contribution_sigmas(i_month, i_param) = nanstd(this_struct.percent_diff(:));
+                    median_contributions(i_month, i_param) = nanmedian(abs(this_struct.percent_diff(:)));
+                    contribution_quantiles(:, i_month, i_param) = quantile(abs(this_struct.percent_diff(:)),[0.05;0.95]);
+                end
+                subplot(3,2,i_month);
+                perdiff = sqrt(pAvg.getWeightedAverage());
+                mean_contributions(i_month, end) = nanmean(abs(perdiff(:)));
+                contribution_sigmas(i_month, end) = nanstd(abs(perdiff(:)));
+                median_contributions(i_month, end) = nanmedian(abs(perdiff(:)));
+                contribution_quantiles(:, i_month, end) = quantile(abs(perdiff(:)), [0.05; 0.95]);
+                
+                pcolor(lon, lat, perdiff);
+                shading flat
+                caxis(calc_plot_limits(perdiff, 'zero', 'max', [0 200]));
+                cb = colorbar;
+                cb.Label.String = 'Total % Uncertainty';
+                set(gca, 'fontsize', 14);
+                state_outlines('k');
+                if include_titles
+                    title(datestr(check_file_dates(i_month), 'mmm yyyy'));
+                end
+            end
+            
+            ax = subplot(3,2,n_months+1);
+            %bar(median_contributions);
+            %bar_errors(median_contributions, squeeze(contribution_quantiles(1,:,:)), squeeze(contribution_quantiles(2,:,:)));
+            
+            bar(mean_contributions);
+            %bar_errors(mean_contributions, contribution_sigmas(:,:));
+            
+            set(gca, 'ygrid', 'on', 'xticklabel', cellstr(datestr(check_file_dates, 'mmm yyyy')));
+            legend(uncert_params{:}, 'Total', 'Location', 'eastoutside');
+            % Expand this plot to fill the width of the figure with some
+            % room for the legend
+            ax.Position(3) = 1.8*ax.Position(3);
+            %ch = get(gcf,'children');
+            %center_axes(ax, ch(4), ch(6));
+            set(gca,'fontsize',14);
+            ylabel('% uncertainty')
+        end
         %%%%%%%%%%%%%%%%%%%%%%
         % Analysis functions %
         %%%%%%%%%%%%%%%%%%%%%%
@@ -2100,25 +2281,32 @@ classdef misc_behr_v3_validation
                 b = 1;
                 while b <= ndays && ~isempty(site_dvec)
                     idate = randi(numel(site_dvec), 1);
-                    [behr, wrf_monthly, wrf_daily] = misc_behr_v3_validation.plot_scd_vs_wrf_columns(locs(isite).ShortName, site_dvec(idate), site_dvec(idate));
-                    try
-                        user_ans = ask_multichoice('Evaluate this day', eval_opts, 'list', true, 'index', true);
-                    catch err
-                        if strcmp(err.identifier, 'ask_multichoice:user_cancel')
-                            % If we cancel the work, save the results
-                            % completed so far.
-                            misc_behr_v3_validation.save_scd_results(misc_behr_v3_validation.scd_comp_file(true), results, eval_opts(1:end-1));
-                            return
-                        else
-                            rethrow(err)
+                    this_date = site_dvec(idate);
+                    
+                    [behr, wrf_monthly, wrf_daily] = misc_behr_v3_validation.plot_scd_vs_wrf_columns(locs(isite).ShortName, site_dvec(idate), site_dvec(idate), 'max_frac_nans', 0.1);
+                    
+                    if numel(behr.lon) > 0
+                        try
+                            user_ans = ask_multichoice('Evaluate this day', eval_opts, 'list', true, 'index', true);
+                        catch err
+                            if strcmp(err.identifier, 'ask_multichoice:user_cancel')
+                                % If we cancel the work, save the results
+                                % completed so far.
+                                misc_behr_v3_validation.save_scd_results(misc_behr_v3_validation.scd_comp_file(true), results, eval_opts(1:end-1));
+                                return
+                            else
+                                rethrow(err)
+                            end
                         end
+                    else
+                        fprintf('Skipping %s %s because not enough SCD data\n', locs(isite).ShortName, datestr(this_date));
                     end
                     % Whether or not we use this day, we don't want to
                     % repeat it, and we want to close the figures
                     close all
-                    this_date = site_dvec(idate);
+                    
                     site_dvec(idate) = [];
-                    if user_ans == ned_ind
+                    if numel(behr.lon) == 0 || user_ans == ned_ind
                         % If the user responded "Not enough data", then
                         % don't store any result.
                         continue
