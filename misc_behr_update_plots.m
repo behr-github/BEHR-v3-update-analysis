@@ -5,6 +5,7 @@ classdef misc_behr_update_plots
     properties(Constant = true)
         start_date = '2012-01-01';
         end_date = '2012-12-31';
+        behr_v3B_surfpres_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/8-SurfPres';
         behr_v3B_var_trop_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/7b-VarTrop';
         behr_v3B_daily_fix_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/7a-DailyFix';
         behr_final_dir = '/Volumes/share-sat/SAT/BEHR/IncrementTests/6-Final';
@@ -373,7 +374,8 @@ classdef misc_behr_update_plots
                 struct('dir', misc_behr_update_plots.behr_nasa_brdf_vis_profs_wrftemp_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly','BEHRAMFTrop','BEHRAMFTropVisOnly'}}),...
                 struct('dir', misc_behr_update_plots.behr_final_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'BEHRAMFTrop', 'BEHRAMFTropVisOnly'}}),...
                 struct('dir', misc_behr_update_plots.behr_v3B_daily_fix_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'BEHRAMFTrop', 'BEHRAMFTropVisOnly'}}),...
-                struct('dir', misc_behr_update_plots.behr_v3B_var_trop_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'BEHRAMFTrop', 'BEHRAMFTropVisOnly','MODISAlbedo'}})...
+                struct('dir', misc_behr_update_plots.behr_v3B_var_trop_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'BEHRAMFTrop', 'BEHRAMFTropVisOnly','GLOBETerpres'}}),...
+                struct('dir', misc_behr_update_plots.behr_v3B_surfpres_dir, 'use_new_avg', true, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'BEHRAMFTrop', 'BEHRAMFTropVisOnly','MODISAlbedo','BEHRSurfacePressure'}})...
                 );
             
             % Removed: struct('dir', misc_behr_update_plots.behr_nasa_brdfD_dir, 'use_new_avg', false, 'data_fields', {{'BEHRColumnAmountNO2Trop', 'BEHRColumnAmountNO2TropVisOnly', 'MODISAlbedo'}}),...
@@ -474,6 +476,7 @@ classdef misc_behr_update_plots
             p.addParameter('diff_type', '');
             p.addParameter('plot_type', '');
             p.addParameter('remove_outliers', []);
+            p.addParameter('only_ocean', []);
             
             p.parse(varargin{:});
             pout = p.Results;
@@ -485,6 +488,7 @@ classdef misc_behr_update_plots
             diff_type = pout.diff_type;
             plot_type = pout.plot_type;
             do_remove_outliers = pout.remove_outliers;
+            ocean_only = pout.only_ocean;
             
             % Get all of the directories that would contain average files
             fns = fieldnames(misc_behr_update_plots);
@@ -570,6 +574,9 @@ classdef misc_behr_update_plots
                 if isempty(do_remove_outliers)
                     do_remove_outliers = ask_yn('Remove outliers from plot?');
                 end
+                if isempty(ocean_only)
+                    ocean_only = ask_yn('Only plot statistics over ocean?');
+                end
             end
             
             Dbase = load(fullfile(base_dir, base_comparison_file));
@@ -587,7 +594,7 @@ classdef misc_behr_update_plots
             if strcmpi(plot_type, 'map')
                 fig = misc_behr_update_plots.plot_change_avg(Dbase.lon_grid, Dbase.lat_grid, Dbase.no2_vcds, Dnew.lon_grid, Dnew.lat_grid, Dnew.no2_vcds, diff_type, title_str, quantity_name, unit_name, '');
             elseif strcmpi(plot_type, 'hist')
-                fig = misc_behr_update_plots.plot_change_hist(Dbase.lon_grid, Dbase.lat_grid, Dbase.no2_vcds, Dnew.lon_grid, Dnew.lat_grid, Dnew.no2_vcds, diff_type, title_str, quantity_name, unit_name, 'remove_plot_outliers', do_remove_outliers);
+                fig = misc_behr_update_plots.plot_change_hist(Dbase.lon_grid, Dbase.lat_grid, Dbase.no2_vcds, Dnew.lon_grid, Dnew.lat_grid, Dnew.no2_vcds, diff_type, title_str, quantity_name, unit_name, 'remove_plot_outliers', do_remove_outliers, 'ocean_only', ocean_only);
             else
                 E.badinput('No action defined for plot type "%s"', plot_type);
             end
@@ -963,10 +970,10 @@ classdef misc_behr_update_plots
                     text_progress_bar(d, numel(dvec));
                 end
                 
-                D = load(fullfile(misc_behr_update_plots.behr_final_dir, 'DailyProfs', behr_filename(dvec(d), 'daily', 'us')),'Data');
+                D = load(fullfile(misc_behr_update_plots.behr_final_dir, 'DailyProfs', behr_filename(dvec(d), 'daily', 'us', '.mat', 'v3-0A')),'Data');
                 DataDaily = D.Data;
                 
-                M = load(fullfile(misc_behr_update_plots.behr_final_dir, 'MonthlyProfs', behr_filename(dvec(d), 'monthly', 'us')), 'Data');
+                M = load(fullfile(misc_behr_update_plots.behr_final_dir, 'MonthlyProfs', behr_filename(dvec(d), 'monthly', 'us', '.mat', 'v3-0A')), 'Data');
                 DataMonthly = M.Data;
                 
                 for a=1:numel(DataDaily)
@@ -1462,7 +1469,8 @@ classdef misc_behr_update_plots
                                   8 9;
                                   9 10;
                                   10 11;
-                                  11 12];
+                                  11 12;
+                                  12 13];
                             
             % Set this to true for any diffs that should try to use
             % visible-only values if use_vis_incr is true;
@@ -2278,12 +2286,14 @@ classdef misc_behr_update_plots
         function fig = plot_change_hist(old_lon_grid, old_lat_grid, old_val, new_lon_grid, new_lat_grid, new_val, diff_type, title_str, quantity_name, unit_name, varargin)
             p = inputParser;
             p.addParameter('remove_plot_outliers', false, @(x) isscalar(x) && islogical(x));
+            p.addParameter('ocean_only', false, @(x) isscalar(x) && islogical(x));
             p.parse(varargin{:});
             pout = p.Results;
             
-            [~, ~, old_val, new_val] = misc_behr_update_plots.match_different_size_data(old_lon_grid, old_lat_grid, old_val, new_lon_grid, new_lat_grid, new_val);
+            [lon_grid, lat_grid, old_val, new_val] = misc_behr_update_plots.match_different_size_data(old_lon_grid, old_lat_grid, old_val, new_lon_grid, new_lat_grid, new_val);
             
             do_remove_outliers = pout.remove_plot_outliers;
+            ocean_only = pout.ocean_only;
             
             if strcmpi(diff_type, 'rel')
                 val_diff = reldiff(new_val, old_val)*100;
@@ -2300,6 +2310,12 @@ classdef misc_behr_update_plots
                 x_label_str = sprintf('%s (%s)', quantity_name, unit_name);
             else
                 E.badinput('No action defined for diff_type = %s', diff_type)
+            end
+            
+            if ocean_only
+                [ocean_mask.mask, ocean_mask.lon, ocean_mask.lat] = get_modis_ocean_mask([-130, -60], [20 55]);
+                ocean_mask_interp = logical(round(interp2(ocean_mask.lon, ocean_mask.lat, double(ocean_mask.mask), lon_grid, lat_grid)));
+                val_diff = val_diff(ocean_mask_interp);
             end
             
             if do_remove_outliers
@@ -2411,7 +2427,7 @@ classdef misc_behr_update_plots
             data_dirs = data_dirs(perm_vec);
             has_daily = has_daily(perm_vec);
             
-            increment_names = {'v2.1C','SCDs','MODIS v6', 'Surf. refl. (MODIS C)', 'Surf. refl','Vis. AMF formulation','\chem{NO_2} profiles','Temperature fix','Temperature profiles','Gridding','Ocean LUT/profile time','Variable trop.'};
+            increment_names = {'v2.1C','SCDs','MODIS v6', 'Surf. refl. (MODIS C)', 'Surf. refl','Vis. AMF formulation','\chem{NO_2} profiles','Temperature fix','Temperature profiles','Gridding','Ocean LUT/profile time','Variable trop.','Hypsometric Surf. Pres'};
             increment_info = struct('dir', data_dirs, 'name', increment_names, 'has_daily', num2cell(has_daily));
         end
         
