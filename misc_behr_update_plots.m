@@ -1568,21 +1568,6 @@ classdef misc_behr_update_plots
             
         end
         
-        
-        function plot_dc3_avg_profiles()
-            Opts = struct('match_file', 'WRF-DC3-Matched-Data.mat', 'match_dir', '/Users/Josh/Documents/MATLAB/BEHR-v3-analysis/Workspaces/WRF',...
-                'quantity', 'NO2', 'lats_filter', 'all', 'strat_filter', false, 'fresh_filter', false);
-            profs = misc_wrf_chem_comp_plots('make-hybrid',Opts);
-            figure;
-            plot(profs.dc3_prof*1e3, profs.dc3_pres);
-            hold on
-            plot(profs.wrf_prof*1e3, profs.wrf_pres);
-            set(gca,'fontsize',16,'ydir','reverse');
-            xlabel('[NO_2] (ppbv)');
-            ylabel('Pressure (hPa)');
-            legend('DC3','WRF');
-        end
-        
         function plot_sl7_rmse(redo_rmse_calcs)
             if ~exist('redo_rmse_calcs','var')
                 redo_rmse_calcs = true;
