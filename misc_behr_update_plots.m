@@ -42,6 +42,10 @@ classdef misc_behr_update_plots
             d = fileparts(mfilename('fullpath'));
         end
         
+        function d = increment_ncdf_root()
+            d = fullfile(misc_behr_update_plots.my_dir, 'Workspaces', 'IncrementTests');
+        end
+        
         function name = average_save_name(data_field, months, prof_type)
             name = sprintf('%s-%s-%s.mat', data_field, upper(months), capitalize_words(prof_type));
         end
@@ -318,9 +322,6 @@ classdef misc_behr_update_plots
         %%%%%%%%%%%%%%%%%%%%
         % Analysis methods %
         %%%%%%%%%%%%%%%%%%%%
-        
-        function compare_bc_profiles
-        end
         
         function compare_bc_amfs()
             % Assume that the files available are the same in both
@@ -1981,6 +1982,72 @@ classdef misc_behr_update_plots
                 stats(i_var).stddev = nanstd(del(:));
                 stats(i_var).median = nanmedian(del(:));
                 stats(i_var).quartiles = quantile(del(:), [0.25 0.75]);
+            end
+        end
+        
+        %%%%%%%%%%%%%%%%%%%%%%
+        % Publishing methods %
+        %%%%%%%%%%%%%%%%%%%%%%
+        
+        function save_avgs_as_ncdf(varargin)
+            E = JLLErrors;
+            
+            p = inputParser;
+            p.addParameter('overwrite', nan);
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            do_overwrite = opt_ask_yn('Overwrite existing files?', pout.overwrite, '"overwrite"');
+            
+            % Get the increment directories
+            incr_dirs = fieldnames(misc_behr_update_plots);
+            incr_dirs = incr_dirs(regcmp(incr_dirs, '^behr'));
+            
+            attributes = struct('no2_vcds', struct('description', 'The averaged quantity (given in the file name), not necessarily NO2 VCDs'),...
+                'lon_grid', struct('description', 'Longitude coordinates for the averaged quantity'),...
+                'lat_grid', struct('description', 'Latitude coordinates for the averaged quantity'),...
+                'count_grid', struct('description', 'The number of pixels contributing to each average value'));
+            
+            for i_dir = 1:numel(incr_dirs)
+                this_dir = misc_behr_update_plots.(incr_dirs{i_dir});
+                [~, increment_dir] = fileparts(this_dir);
+                sub_dir = fullfile(misc_behr_update_plots.increment_ncdf_root, increment_dir);
+                if ~exist(sub_dir, 'dir')
+                    mkdir(sub_dir);
+                end
+                F = dir(fullfile(this_dir, '*.mat'));
+                for i_file = 1:numel(F)
+                    savename = fullfile(sub_dir, strrep(F(i_file).name, 'mat', 'nc'));
+                    if exist(savename, 'file') && ~do_overwrite
+                        fprintf('%s exists; skipping\n', savename);
+                        continue
+                    else
+                        fprintf('Saving %s\n', savename);
+                    end
+                    Avg = load(fullfile(this_dir, F(i_file).name));
+                    fns = fieldnames(Avg);
+                    sz = size(Avg.lon_grid);
+                    
+                    % Create each numeric variable. One field may be a
+                    % structure with averaging options that is not
+                    % essential, and complicated to save in netcdf format.
+                    for i_fn = 1:numel(fns)
+                        val = Avg.(fns{i_fn});
+                        if ~isnumeric(val) || isempty(val)
+                            continue
+                        elseif ~isequal(size(val), sz)
+                            E.notimplemented('Variables are different sizes')
+                        end
+                        fprintf('   Writing %s\n', fns{i_fn});
+                        nccreate(savename, fns{i_fn}, 'Dimensions', {'lat', sz(1), 'lon', sz(2)}, 'Datatype', 'double', 'FillValue', -1e38, 'DeflateLevel', 5);
+                        ncwrite(savename, fns{i_fn}, val);
+                        atts = attributes.(fns{i_fn});
+                        att_names = fieldnames(atts);
+                        for i_att = 1:numel(att_names)
+                            ncwriteatt(savename, fns{i_fn}, att_names{i_att}, atts.(att_names{i_att}));
+                        end
+                    end
+                end
             end
         end
     end
