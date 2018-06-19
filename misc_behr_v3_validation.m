@@ -13,6 +13,13 @@ classdef misc_behr_v3_validation
                 'monthly', struct('raw', [1 0.75 0], 'avg', 'r'),... % red and orange for the monthly profiles
                 'daily', struct('raw', 'c', 'avg', 'b')); % blue and cyan for the daily profiles
             
+        plot_markers = struct('aircraft', struct('raw', '.', 'avg', 'o'),...
+            'v2', struct('raw', '.', 'avg', '+'),...
+            'monthly', struct('raw', '.', 'avg', '^'),...
+            'daily', struct('raw', '.', 'avg', 'v'));
+        
+        plot_legend_names = struct('aircraft', 'Aircraft', 'v2', 'v2.1C', 'monthly', 'v3.0 (M)', 'daily', 'v3.0 (D)');
+            
         profile_extend_methods = {'wrf','geos','extrap'};
         
         discover_campaigns = {'discover_md','discover_ca','discover_tx','discover_co'};
@@ -2629,6 +2636,111 @@ classdef misc_behr_v3_validation
             set(gca,'fontsize',14);
             ylabel(bar_y_label)
         end
+        
+        function fig = plot_prof_regression(varargin)
+            % This function will plot the R2 value at each model level for
+            % either the profile concentration or shape factor between WRF
+            % and aircraft profiles
+            
+            p = advInputParser;
+            p.addParameter('campaign', '');
+            p.addParameter('versions', {});
+            p.addParameter('title',true);
+            
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            wrf_comp = load(misc_behr_v3_validation.wrf_comp_file);
+            available_campaigns = fieldnames(wrf_comp.v2);
+            
+            include_title = pout.title;
+            campaign = opt_ask_multichoice('Which campaign to plot?', available_campaigns, pout.campaign, '"campaign"', 'list', true);
+            
+            available_versions = {'v2','monthly'};
+            if isfield(wrf_comp.daily, campaign)
+                available_versions = veccat(available_versions, 'daily');
+            end
+            versions = opt_ask_multiselect('Which versions to include?', available_versions, pout.versions, '"versions"');
+            
+            
+            plot_colors = misc_behr_v3_validation.plot_colors;
+            plot_markers = misc_behr_v3_validation.plot_markers;
+            plot_leg_str = misc_behr_v3_validation.versions2legend(versions);
+            
+            fig=figure;
+            l = gobjects(numel(versions),1);
+            for i_version = 1:numel(versions)
+                this_versions = versions{i_version};
+                [r2, pres_bins] = misc_behr_v3_validation.calculate_profile_regressions(wrf_comp.(versions{i_version}).(campaign));
+                l(i_version) = line(r2, pres_bins, 'color', plot_colors.(this_versions).avg, 'marker', plot_markers.(this_versions).avg, 'linestyle','none','markersize',10,'linewidth',2);
+            end
+            
+            legend(l, plot_leg_str)
+            set(gca,'ydir','reverse','fontsize',16)
+            xlabel('R^2');
+            ylabel('Pressure (hPa)');
+            if include_title
+                title(upper(strrep(campaign,'_','-')))
+            end
+        end
+        
+        function [r2_vals, pres_bins] = calculate_profile_regressions(prof_struct, varargin)
+            % prof_struct should be one campaign's structure from the wrf
+            % comparison file.
+            
+            p = advInputParser;
+            p.addParameter('reg_type', 'y-resid');
+            
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            reg_type = pout.reg_type;
+            
+            E = JLLErrors;
+            % First, get the list of individual profiles. If there are
+            % none, throw and error b/c this only works for DISCOVER-type
+            % campaigns
+            fns = fieldnames(prof_struct);
+            fns = fns(regcmp(fns, 'p\d+'));
+            if isempty(fns)
+                E.badinput('Must pass a profile structure containing at least one field named p#### or p######')
+            end
+            n_profs = numel(fns);
+            
+            % Now we need to loop through each profile field and bin the
+            % WRF and aircraft data for that profile into pressure bins. If
+            % this is the first profile, use the size of the bin vectors to
+            % initialize the full array for the profiles.
+            for i_prof = 1:n_profs
+                wrf_pres = prof_struct.(fns{i_prof}).match.wrf.pres;
+                wrf_no2 = prof_struct.(fns{i_prof}).match.wrf.no2;
+                air_pres = prof_struct.(fns{i_prof}).match.data.pres;
+                air_no2 = prof_struct.(fns{i_prof}).match.data.no2;
+                
+                [wrf_no2_binned, pres_bins] = bin_omisp_pressure(wrf_pres, wrf_no2, 'mean');
+                air_no2_binned = bin_omisp_pressure(air_pres, air_no2, 'mean');
+                
+                if ~isequal(size(wrf_no2_binned), size(air_no2_binned))
+                    E.notimplemented('wrf and aircraft binned NO2 are different sizes')
+                end
+                
+                if i_prof == 1
+                    all_wrf_no2_binned = nan(numel(wrf_no2_binned), n_profs);
+                    all_air_no2_binned = nan(numel(air_no2_binned), n_profs);
+                end
+                
+                all_wrf_no2_binned(:, i_prof) = wrf_no2_binned(:);
+                all_air_no2_binned(:, i_prof) = air_no2_binned(:);
+            end
+            
+            % Now, finally, calculate the correlation for each level
+            n_levels = size(all_wrf_no2_binned,1);
+            r2_vals = nan(n_levels, 1);
+            for i_level = 1:n_levels
+                [~,~,~,line_data] = calc_fit_line(all_air_no2_binned(i_level, :), all_wrf_no2_binned(i_level, :), 'regression', reg_type);
+                r2_vals(i_level) = line_data.R2;
+            end
+        end
         %%%%%%%%%%%%%%%%%%%%%%
         % Analysis functions %
         %%%%%%%%%%%%%%%%%%%%%%
@@ -2830,6 +2942,15 @@ classdef misc_behr_v3_validation
     end
     
     methods(Static = true, Access = private)
+        function leg_strings = versions2legend(versions)
+            % Convert a cell array of version names into a cell array of
+            % legend-formatted names
+            leg_strings = cell(size(versions));
+            for i=1:numel(versions)
+                leg_strings{i} = misc_behr_v3_validation.plot_legend_names.(versions{i});
+            end
+        end
+        
         function scd_subgroup(h5_filename, group_name, results)
             E = JLLErrors;
             % Make sure group name does NOT end in a slash to avoid double
