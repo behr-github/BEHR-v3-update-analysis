@@ -13,10 +13,10 @@ classdef misc_behr_v3_validation
                 'monthly', struct('raw', [1 0.75 0], 'avg', 'r'),... % red and orange for the monthly profiles
                 'daily', struct('raw', 'c', 'avg', 'b')); % blue and cyan for the daily profiles
             
-        plot_markers = struct('aircraft', struct('raw', '.', 'avg', 'o'),...
-            'v2', struct('raw', '.', 'avg', '+'),...
-            'monthly', struct('raw', '.', 'avg', '^'),...
-            'daily', struct('raw', '.', 'avg', 'v'));
+        plot_markers = struct('aircraft', struct('raw', '.', 'avg', 'o', 'filled', false),...
+            'v2', struct('raw', '.', 'avg', '+', 'filled', false),...
+            'monthly', struct('raw', '.', 'avg', 's', 'filled', true),...
+            'daily', struct('raw', '.', 'avg', 'd', 'filled', false));
         
         plot_legend_names = struct('aircraft', 'Aircraft', 'v2', 'v2.1C', 'monthly', 'v3.0 (M)', 'daily', 'v3.0 (D)');
             
@@ -2641,11 +2641,30 @@ classdef misc_behr_v3_validation
             % This function will plot the R2 value at each model level for
             % either the profile concentration or shape factor between WRF
             % and aircraft profiles
+            %
+            %   'campaigns' - which campaigns to include, as a cell array
+            %
+            %   'versions' - which versions to include (v2, monthly, daily)
+            %   as a cell array of strings
+            %
+            %   'title' - boolean, whether or not to include titles (which
+            %   will be the campaign name). Default is true.
+            %
+            %   'with_diffs' - boolean, whether or not to include bar
+            %   graphs of the differences in R2 if exactly two versions
+            %   requested. Default is true.
+            %
+            %   'num_pts' - boolean, whether to include the number of
+            %   comparisons that went into each R2 calculation on the
+            %   difference plot. Has no effect if numel(versions) ~= 2.
+            %   Default is true.
             
             p = advInputParser;
-            p.addParameter('campaign', '');
+            p.addParameter('campaigns', '');
             p.addParameter('versions', {});
             p.addParameter('title',true);
+            p.addParameter('with_diffs',true);
+            p.addParameter('num_pts',true);
             
             p.parse(varargin{:});
             pout = p.Results;
@@ -2654,37 +2673,138 @@ classdef misc_behr_v3_validation
             available_campaigns = fieldnames(wrf_comp.v2);
             
             include_title = pout.title;
-            campaign = opt_ask_multichoice('Which campaign to plot?', available_campaigns, pout.campaign, '"campaign"', 'list', true);
+            include_diffs = pout.with_diffs;
+            include_num_pts = pout.num_pts;
+            
+            campaigns = opt_ask_multiselect('Which campaigns to plot?', available_campaigns, pout.campaigns, '"campaign"');
             
             available_versions = {'v2','monthly'};
-            if isfield(wrf_comp.daily, campaign)
+            if isfield(wrf_comp.daily, campaigns)
                 available_versions = veccat(available_versions, 'daily');
             end
             versions = opt_ask_multiselect('Which versions to include?', available_versions, pout.versions, '"versions"');
             
+            include_diffs = include_diffs && numel(versions) == 2;
             
             plot_colors = misc_behr_v3_validation.plot_colors;
             plot_markers = misc_behr_v3_validation.plot_markers;
             plot_leg_str = misc_behr_v3_validation.versions2legend(versions);
             
-            fig=figure;
-            l = gobjects(numel(versions),1);
-            for i_version = 1:numel(versions)
-                this_versions = versions{i_version};
-                [r2, pres_bins] = misc_behr_v3_validation.calculate_profile_regressions(wrf_comp.(versions{i_version}).(campaign));
-                l(i_version) = line(r2, pres_bins, 'color', plot_colors.(this_versions).avg, 'marker', plot_markers.(this_versions).avg, 'linestyle','none','markersize',10,'linewidth',2);
+            fig = figure;
+            if include_diffs
+                subplot_x = 2; 
+            else
+                subplot_x = 1;
+            end
+            subplot_y = numel(campaigns);
+            
+            % We only want to label the first axes in each row, not the
+            % differences.
+            axes_to_label = gobjects(subplot_y, 1);
+            
+            for i_cam = 1:numel(campaigns)
+                this_campaign = campaigns{i_cam};
+                
+                if include_diffs
+                    subplot_ind = (i_cam-1)*2 + 1;
+                else
+                    subplot_ind = i_cam;
+                end
+                
+                left_ax = subplot(subplot_y, subplot_x, subplot_ind);
+                axes_to_label(i_cam) = left_ax;
+                
+                r2 = [];
+                num_pts = [];
+                for i_version = 1:numel(versions)
+                    this_version = versions{i_version};
+                    [r2(:,i_version), pres_bins, num_pts(:,i_version)] = misc_behr_v3_validation.calculate_profile_regressions(wrf_comp.(this_version).(this_campaign));
+                end
+                
+                % Plot the individual levels' R2 values, only including
+                % levels where all versions have an R2 value. Some may not
+                % have an R2 value in some levels due to differences in
+                % pressure for each WRF point between the versions.
+                notnans = all(~isnan(r2),2);
+                bin_number = (1:size(r2,1))';
+                plot_ylim = [find(notnans,1,'first')-1, find(notnans,1,'last')+1];
+                i_lastval = find(notnans,1,'last');
+                l = gobjects(numel(versions),1);
+                for i_version = 1:numel(versions)
+                    this_version = versions{i_version};
+                    if plot_markers.(this_version).filled
+                        extra_args = {'markerfacecolor', plot_colors.(this_version).avg};
+                    else
+                        extra_args = {};
+                    end
+                    % Plot using model level as the y-coordinate to avoid
+                    % squishing up the bottom levels that are closer in
+                    % pressure.
+                    l(i_version) = line(r2(notnans,i_version), bin_number(notnans), 'color', plot_colors.(this_version).avg, 'marker', plot_markers.(this_version).avg, 'linestyle','none','markersize',10,'linewidth',2, extra_args{:});
+                end
+                
+                % Only put the legend on the first plot.
+                if i_cam == 1
+                    legend(plot_leg_str)
+                end
+                % Since we plotted with model level as the y-coordinate,
+                % redo the ticks to be pressure. I just randomly picked
+                % every 4 levels to give a decent spacing.
+                set(gca,'ytick',bin_number(1:4:i_lastval),'yticklabel',pres_bins(1:4:i_lastval), 'fontsize', 16, 'ygrid', 'on');
+                xlabel('R^2');
+                ylabel('Pressure (hPa)');
+                if include_title
+                    title(upper(strrep(this_campaign,'_','-')))
+                end
+                
+                if include_num_pts
+                    combined_num_pts_strings = cell(size(num_pts,1),1);
+                    for i_level = 1:size(num_pts,1)
+                        combined_num_pts_strings{i_level} = sprintf('(%d, %d)', num_pts(i_level,1), num_pts(i_level,2));
+                    end
+                end
+                
+                % If we're plotting exactly 2 versions and we want to
+                % include diffs, add them now.
+                if numel(versions) == 2 && include_diffs
+                    set(gca,'ylim', plot_ylim);
+                    right_ax = subplot(subplot_y, subplot_x, subplot_ind+1);
+                    r2_diffs = r2(:,2) - r2(:,1);
+                    pos_diffs = r2_diffs > 0;
+                    positive_bars = barh(bin_number(pos_diffs), r2_diffs(pos_diffs), plot_colors.(versions{2}).avg);
+                    hold on
+                    negative_bars = barh(bin_number(~pos_diffs), r2_diffs(~pos_diffs), plot_colors.(versions{1}).avg);
+                    
+                    if include_num_pts
+                        text(positive_bars.YData*1.1, positive_bars.XData, combined_num_pts_strings(positive_bars.XData));
+                        text(negative_bars.YData*1.1, negative_bars.XData, combined_num_pts_strings(negative_bars.XData), 'HorizontalAlignment', 'right');
+                        plot_xlims = calc_plot_limits(r2_diffs*1.5, 0.2);
+                    else
+                        plot_xlims = calc_plot_limits(r2_diffs, 0.2);
+                    end
+                    
+                    set(gca, 'fontsize', 16, 'ylim', plot_ylim, 'ytick', [], 'xlim', plot_xlims);
+                    xlabel(sprintf('R^2 %s - R^2 %s', plot_leg_str{2}, plot_leg_str{1}));
+                    
+                    % Shift the axes so that the profiles have more space than
+                    % the differences, and make sure their size in the
+                    % y-dimension is the same
+                    shift = 0.1;
+                    right_ax.Position = right_ax.Position + [shift, 0, -shift, 0];
+                    right_ax.Position([2 4]) = left_ax.Position([2 4]);
+                    left_ax.Position(3) = left_ax.Position(3) + shift;
+                end
             end
             
-            legend(l, plot_leg_str)
-            set(gca,'ydir','reverse','fontsize',16)
-            xlabel('R^2');
-            ylabel('Pressure (hPa)');
-            if include_title
-                title(upper(strrep(campaign,'_','-')))
+            % Give the plots a little more size
+            fig.Position(3:4) = fig.Position(3:4) .* [1.5 subplot_y*1.2];
+            
+            if ~include_title
+                label_subfigs(gcf, 'xshift', 0.2, 'ax', axes_to_label);
             end
         end
         
-        function [r2_vals, pres_bins] = calculate_profile_regressions(prof_struct, varargin)
+        function [r2_vals, pres_bins, num_pts] = calculate_profile_regressions(prof_struct, varargin)
             % prof_struct should be one campaign's structure from the wrf
             % comparison file.
             
@@ -2736,10 +2856,14 @@ classdef misc_behr_v3_validation
             % Now, finally, calculate the correlation for each level
             n_levels = size(all_wrf_no2_binned,1);
             r2_vals = nan(n_levels, 1);
+            num_pts = nan(n_levels, 1);
+            warning('off', 'fitting:nans_removed')
             for i_level = 1:n_levels
                 [~,~,~,line_data] = calc_fit_line(all_air_no2_binned(i_level, :), all_wrf_no2_binned(i_level, :), 'regression', reg_type);
                 r2_vals(i_level) = line_data.R2;
+                num_pts(i_level) = line_data.num_pts;
             end
+            warning('on', 'fitting:nans_removed')
         end
         %%%%%%%%%%%%%%%%%%%%%%
         % Analysis functions %
