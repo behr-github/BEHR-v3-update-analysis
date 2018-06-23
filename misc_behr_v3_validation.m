@@ -18,7 +18,7 @@ classdef misc_behr_v3_validation
             'monthly', struct('raw', '.', 'avg', 's', 'filled', true),...
             'daily', struct('raw', '.', 'avg', 'd', 'filled', false));
         
-        plot_legend_names = struct('aircraft', 'Aircraft', 'v2', 'v2.1C', 'monthly', 'v3.0 (M)', 'daily', 'v3.0 (D)');
+        plot_wrf_prof_legend_names = struct('aircraft', 'Aircraft', 'v2', 'V2', 'monthly', 'Monthly', 'daily', 'Daily');
             
         profile_extend_methods = {'wrf','geos','extrap'};
         
@@ -46,9 +46,7 @@ classdef misc_behr_v3_validation
         function value = profile_comp_file(extend_method)
             E = JLLErrors;
             narginchk(1,1);
-            if ~ismember(extend_method, misc_behr_v3_validation.profile_extend_methods)
-                E.badinput('EXTEND_METHOD must be one of: %s', strjoin(misc_behr_v3_validation.profile_extend_methods, ', '));
-            end
+            extend_method = opt_ask_multichoice('Which profile extension method to use?', misc_behr_v3_validation.profile_extend_methods, extend_method, 'extend_method', 'list', true);
             value = fullfile(misc_behr_v3_validation.validation_root_dir, 'VCD-Comparison', sprintf('profile-structs-%s.mat', extend_method));
         end
         
@@ -88,7 +86,7 @@ classdef misc_behr_v3_validation
             value = fullfile(misc_behr_v3_validation.validation_root_dir, 'Error-Analysis', 'pres-comp.mat');
         end
         
-        function acarreta_cldpres_error_raw_file()
+        function value = acarreta_cldpres_error_raw_file()
             value = fullfile(misc_behr_v3_validation.validation_root_dir, 'Error-Analysis', 'AcarrataCldPresUncert.txt');
         end
         
@@ -970,7 +968,7 @@ classdef misc_behr_v3_validation
             opts.labels.x = opts.labels.(opts.x_var);
             opts.labels.y = opts.labels.(opts.y_var);
             
-            allowed_prof_modes = {'monthly', 'daily', 'both'};
+            allowed_prof_modes = {'monthly', 'daily', 'both', 'md-swap'};
             if regcmpi(opts.x_var, 'behr') || regcmpi(opts.y_var, 'behr')
                 opts.prof_mode = opt_ask_multichoice('Which profile mode to use for v3 data?', allowed_prof_modes, prof_mode, '"prof_mode"', 'list', true);
             else
@@ -1013,7 +1011,7 @@ classdef misc_behr_v3_validation
             
             opts.version = opt_ask_multichoice('Which version of the product?', {'v2', 'v3', 'both'}, product_version, '"version"', 'list', true);
             
-            
+            swap_md_air = false;
             switch lower(opts.prof_mode)
                 case 'monthly'
                     tmp_data_structs = {comp_struct.v2.us_monthly, comp_struct.v3.us_monthly};
@@ -1023,6 +1021,15 @@ classdef misc_behr_v3_validation
                     tmp_data_structs = {comp_struct.v2.us_monthly, comp_struct.v3.us_daily};
                     opts.legend_strings = {v2_string, v3D_string};
                     xx_v3 = [false, true];
+                case 'md-swap'
+                    tmp_data_structs = {comp_struct.v3.us_monthly, comp_struct.v3.us_daily};
+                    opts.legend_strings = {v3M_string, v3D_string};
+                    xx_v3 = [true, true];
+                    swap_md_air = true;
+                    if ~strcmpi(opts.version, 'v3')
+                        warning('For "md-swap" data source, version must be set to "v3", so setting version to "v3" now');
+                    end
+                    opts.version = 'v3';
                 case 'both'
                     tmp_data_structs = {comp_struct.v2.us_monthly, comp_struct.v3.us_monthly, comp_struct.v3.us_daily};
                     opts.legend_strings = {v2_string, v3M_string, v3D_string};
@@ -1050,7 +1057,31 @@ classdef misc_behr_v3_validation
                 for i_cam = 1:numel(opts.campaigns)
                     data_substruct = this_comp.(opts.campaigns{i_cam}).(opts.time_range);
                     if ~isempty(data_substruct)
-                        data_substruct.x = data_substruct.(opts.x_var);
+                        % Special case: if we're swapping out the monthly
+                        % and daily profiles' aircraft VCDs (since the
+                        % integration of those VCDs uses limits derived
+                        % from the profiles), then we need to override
+                        % where the x-variable comes from. We assume that
+                        % tmp_data_structs{1} is monthly and
+                        % tmp_data_structs{2} is daily profiles.
+                        if swap_md_air
+                            if i_dat == 1
+                                i_dat_swap = 2;
+                            elseif i_dat == 2
+                                i_dat_swap = 1;
+                            else
+                                E.notimplemented('Cannot swap monthly/daily aircraft VCDs if more than two data structs');
+                            end
+                            x_substruct = tmp_data_structs{i_dat_swap}.(opts.campaigns{i_cam}).(opts.time_range);
+                            if ~isempty(x_substruct)
+                                data_substruct.x = x_substruct.(opts.x_var);
+                            else
+                                warning('No daily prof data for %s, so not swapping x variable', opts.campaigns{i_cam});
+                                data_substruct.x = data_substruct.(opts.x_var);
+                            end
+                        else
+                            data_substruct.x = data_substruct.(opts.x_var);
+                        end
                         data_substruct.y = data_substruct.(opts.y_var);
                     end
                     data_substruct.campaign = opts.campaigns{i_cam};
@@ -1184,6 +1215,8 @@ classdef misc_behr_v3_validation
             p.addParameter('campaigns',{});
             p.addParameter('remove_neg_vcd', []);
             p.addParameter('extend_method', '');
+            p.addParameter('swap_md', nan)
+            p.addParameter('return_as_table', nan);
             
             p.parse(varargin{:});
             pout = p.Results;
@@ -1198,14 +1231,13 @@ classdef misc_behr_v3_validation
             
             
             campaigns = pout.campaigns;
-            extend_method = pout.extend_method;
+            extend_method = opt_ask_multichoice('Which profile extension method to use?', misc_behr_v3_validation.profile_extend_methods, pout.extend_method, 'extend_method', 'list', true);
+            do_swap_monthly_daily = opt_ask_yn('Swap monthly/daily prof aircraft VCDs?', pout.swap_md, '"swap_md"');
+            return_as_table = opt_ask_yn('Return as table (not array)?', pout.return_as_table, '"return_as_table"');
             
             remove_neg_vcd = opt_ask_yn('Remove negative VCDs?', pout.remove_neg_vcd, '"remove_neg_vcd"',...
-                'test_fxn', @(x) islogical(x) && (isscalar(x) || numel(x) == numel(campaigns)),...
+                'test_fxn', @(x) islogical(x) && (isscalar(x) || numel(x) == numel(campaigns)), 'ask_condition', @isempty,...
                 'test_msg', '%s must be a logical array, either scalar or the same size as "campaigns"');
-            if isscalar(remove_neg_vcd)
-                remove_neg_vcd = repmat(remove_neg_vcd, size(campaigns));
-            end
             
             switch lower(data_source)
                 case 'aircraft'
@@ -1230,7 +1262,19 @@ classdef misc_behr_v3_validation
                 campaigns = fieldnames(comp_struct.v2.us_monthly);
             end
             
-            common_opts = {'data_source', data_source, 'extend_method', extend_method, 'prof_mode', 'both', 'version', 'both', 'time_range', time_range, 'remove_outliers', true, 'plot_type', 'scatter',...
+            if isscalar(remove_neg_vcd)
+                remove_neg_vcd = repmat(remove_neg_vcd, size(campaigns));
+            end
+            
+            if do_swap_monthly_daily
+                prof_mode = 'md-swap';
+                version = 'v3';
+            else
+                prof_mode = 'both';
+                version = 'both';
+            end
+            
+            common_opts = {'data_source', data_source, 'extend_method', extend_method, 'prof_mode', prof_mode, 'version', version, 'time_range', time_range, 'remove_outliers', true, 'plot_type', 'scatter',...
                 'color_by', 'none', 'match_pandora_aircraft', false};
             
             for i_var = 1:2
@@ -1275,6 +1319,15 @@ classdef misc_behr_v3_validation
             end
             
             column_names = {'Campaign', 'Product', 'Slope','Intercept','$R^2$'};
+            
+            if return_as_table
+                column_names{end} = 'R2';
+                table_row_names = cell(size(values,1),1);
+                for i_row = 1:numel(table_row_names)
+                    table_row_names{i_row} = strjoin(row_names(i_row, :), ': ');
+                end
+                values = array2table(values, 'RowNames', table_row_names, 'VariableNames', column_names(3:end));
+            end
         end
         
         function varargout = make_aircraft_pandora_avg(varargin)
@@ -2809,7 +2862,12 @@ classdef misc_behr_v3_validation
             % comparison file.
             
             p = advInputParser;
+            % y-resid and rma seem to return the same R^2 values
             p.addParameter('reg_type', 'y-resid');
+            % If I need to add shape factors for a reviewer (because they
+            % seem to love shape factors) probably the simplest way would
+            % be to calculate a partial VCD just for the extent that the
+            % aircraft covers
             
             p.parse(varargin{:});
             pout = p.Results;
@@ -2865,6 +2923,65 @@ classdef misc_behr_v3_validation
             end
             warning('on', 'fitting:nans_removed')
         end
+        
+        function plot_vcd_prof_ensembles(varargin)
+            p = advInputParser;
+            p.addParameter('extend_methods', {});
+            p.addParameter('prof_type', '');
+            p.addParameter('campaigns', {});
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            extend_methods = opt_ask_multiselect('Which extend method(s) to include?', misc_behr_v3_validation.profile_extend_methods, pout.extend_methods, '"extend_methods"');
+            prof_type = opt_ask_multichoice('Which a priori profile type to use?', {'monthly','daily'}, pout.prof_type, '"prof_type"', 'list', true, 'default', 'monthly');
+            
+            % We need to load at least one comparison structure to figure
+            % out which campaigns are available
+            comp_structs = make_empty_struct_from_cell(extend_methods);
+            for i_extend = 1:numel(extend_methods)
+                comp_structs.(extend_methods{i_extend}) = load(misc_behr_v3_validation.profile_comp_file(extend_methods{i_extend})); %#ok<LOAD>
+            end
+            
+            available_campaigns = misc_behr_v3_validation.list_available_campaigns(comp_structs.(extend_methods{1}), prof_type);
+            campaigns = opt_ask_multiselect('Which campaign(s) to include?', available_campaigns, pout.campaigns, '"campaigns"');
+            prof_fn = sprintf('us_%s', prof_type);
+            figs = gobjects(size(campaigns));
+            mode_colors = {'r','b','g'};
+            for i_cam = 1:numel(campaigns)
+                this_campaign = campaigns{i_cam};
+                figs(i_cam) = figure;
+                
+                l = gobjects(2*numel(extend_methods),1);
+                legend_str = cell(1,2*numel(extend_methods));
+                for i_extend = 1:numel(extend_methods)
+                    this_extend = extend_methods{i_extend};
+                    mode_color = mode_colors{i_extend};
+                    details_struct = comp_structs.(this_extend).v3.(prof_fn).(this_campaign).t1200_1500.details;
+                    by_2_ind = (i_extend-1)*2+1;
+                    for i_prof = 1:numel(details_struct)
+                        
+                        pres = details_struct(i_prof).binned_pressure;
+                        if isempty(pres)
+                            continue
+                        end
+                        
+                        prof = details_struct(i_prof).binned_profile;
+                        xx_appended = details_struct(i_prof).is_appended_or_interpolated == 1;
+                        l(by_2_ind) = line(prof(~xx_appended), pres(~xx_appended), 'color', mode_color, 'linestyle', '-');
+                        legend_str{by_2_ind} = this_extend;
+                        prof(~xx_appended) = nan;
+                        l(by_2_ind+1) = line(prof, pres, 'color', mode_color, 'linestyle', '--');
+                        legend_str{by_2_ind+1} = sprintf('%s (extension)', this_extend);
+                    end
+                end
+                legend(l, legend_str);
+                xlabel('[NO_2]');
+                ylabel('Pressure (hPa)');
+                set(gca,'ydir','reverse');
+                title(this_campaign);
+            end
+        end
+        
         %%%%%%%%%%%%%%%%%%%%%%
         % Analysis functions %
         %%%%%%%%%%%%%%%%%%%%%%
@@ -3071,7 +3188,7 @@ classdef misc_behr_v3_validation
             % legend-formatted names
             leg_strings = cell(size(versions));
             for i=1:numel(versions)
-                leg_strings{i} = misc_behr_v3_validation.plot_legend_names.(versions{i});
+                leg_strings{i} = misc_behr_v3_validation.plot_wrf_prof_legend_names.(versions{i});
             end
         end
         
@@ -3144,6 +3261,18 @@ classdef misc_behr_v3_validation
                 'behr_no2', 'BEHR NO_2 VCD (molec. cm^{-2})');
             end
         end
+        
+        function campaigns = list_available_campaigns(comp_struct, prof_mode) 
+            prof_fn = sprintf('us_%s', prof_mode);
+            substruct = comp_struct.v3.(prof_fn);
+            campaigns = fieldnames(substruct);
+            keep_campaigns = true(size(campaigns));
+            for i_cam = 1:numel(campaigns)
+                keep_campaigns(i_cam) = ~isempty(substruct.(campaigns{i_cam}).t1200_1500);
+            end
+            campaigns = campaigns(keep_campaigns);
+        end
     end
+    
     
 end
