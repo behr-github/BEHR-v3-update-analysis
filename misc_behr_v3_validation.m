@@ -9,23 +9,23 @@ classdef misc_behr_v3_validation
         gcas_dir = '/Volumes/share2/USERS/LaughnerJ/CampaignRaw/DISCOVER-AQ_TX/B200/GCAS-SAO';
         
         plot_colors = struct('aircraft', struct('raw', [0.5 0.5 0.5], 'avg', 'k'),... % black and grey for the aircraft data
-                'v2', struct('raw', 'g', 'avg', [0 0.5 0]),... % greens for version 2
-                'monthly', struct('raw', [1 0.75 0], 'avg', 'r'),... % red and orange for the monthly profiles
-                'daily', struct('raw', 'c', 'avg', 'b')); % blue and cyan for the daily profiles
-            
+            'v2', struct('raw', 'g', 'avg', [0 0.5 0]),... % greens for version 2
+            'monthly', struct('raw', [1 0.75 0], 'avg', 'r'),... % red and orange for the monthly profiles
+            'daily', struct('raw', 'c', 'avg', 'b')); % blue and cyan for the daily profiles
+        
         plot_markers = struct('aircraft', struct('raw', '.', 'avg', 'o', 'filled', false),...
             'v2', struct('raw', '.', 'avg', '+', 'filled', false),...
             'monthly', struct('raw', '.', 'avg', 's', 'filled', true),...
             'daily', struct('raw', '.', 'avg', 'd', 'filled', false));
         
         plot_wrf_prof_legend_names = struct('aircraft', 'Aircraft', 'v2', 'V2', 'monthly', 'Monthly', 'daily', 'Daily');
-            
+        
         profile_extend_methods = {'wrf','geos','extrap'};
         
         discover_campaigns = {'discover_md','discover_ca','discover_tx','discover_co'};
     end
     
-
+    
     
     methods(Static = true)
         %%%%%%%%%%%%%%%%%%%%%%%%%
@@ -369,13 +369,13 @@ classdef misc_behr_v3_validation
                                 [~, time_fn] = misc_behr_v3_validation.format_profile_time_range(time_windows(b));
                                 % Construct the options list
                                 opts_list = {'campaign', all_campaigns{a},...
-                                             'behr_dir', behr_dir,...
-                                             'vectorize', false,...
-                                             'cloud_prod', 'omi',...
-                                             'cloud_frac_max', 0.2,...
-                                             'row_anomaly', 'XTrackFlags',...
-                                             'sat_fields', sat_fields,...
-                                             'time_window', time_windows(b)};
+                                    'behr_dir', behr_dir,...
+                                    'vectorize', false,...
+                                    'cloud_prod', 'omi',...
+                                    'cloud_frac_max', 0.2,...
+                                    'row_anomaly', 'XTrackFlags',...
+                                    'sat_fields', sat_fields,...
+                                    'time_window', time_windows(b)};
                                 try
                                     campaign.(time_fn) = run_gcas_verification(opts_list{:});
                                     campaign_vec.(time_fn) = vectorize_gcas_matches(campaign.(time_fn));
@@ -412,7 +412,7 @@ classdef misc_behr_v3_validation
             % This will generate a structure containing WRF data matched to
             % individual DISCOVER profiles, as well as information about
             % the OMI overpass time vs. the profile time
-            % 
+            %
             % The hierarchy of the structure will be:
             %   profile type (daily, monthly, or version 2)
             %       campaign
@@ -425,7 +425,7 @@ classdef misc_behr_v3_validation
             p.addParameter('do_save', nan);
             % By default, we want to restrict the campaign average profiles
             % to just the 1.5 hours before or after the standard OMI
-            % overpass of 1:30 pm. 
+            % overpass of 1:30 pm.
             p.addParameter('avg_prof_lst_range', [12, 15]);
             
             p.parse(varargin{:});
@@ -706,22 +706,22 @@ classdef misc_behr_v3_validation
             % must be a scalar number of grid cells in each direction to
             % get. If omitted, defaults to 0.
             E = JLLErrors;
-    
+            
             if ~exist('radius', 'var')
                 radius = 0;
-            end 
-    
+            end
+            
             sz = size(lon);
             
             r = sqrt((lon - loc.Longitude).^2 + (lat - loc.Latitude).^2);
             [~, i_min] = min(r(:));
-            [xx, yy] = ind2sub(size(lon), i_min); 
-    
+            [xx, yy] = ind2sub(size(lon), i_min);
+            
             xx = (xx - radius):(xx + radius);
             xx = xx(xx > 0 & xx <= sz(1));
             yy = (yy - radius):(yy + radius);
             yy = yy(yy > 0 & yy <= sz(2));
-        end 
+        end
         
         function [behr_daily, wrf_monthly, wrf_daily] = load_wrf_and_behr_data(plot_loc, date_in, varargin)
             p = inputParser;
@@ -827,27 +827,27 @@ classdef misc_behr_v3_validation
                 wrf_monthly.no2_vcds = [];
             end
         end
-
+        
         function [box_vals, box_pres, box_quartiles] = make_boxplot_bins(pres, no2)
             [box_vals, box_pres, box_quartiles] = bin_omisp_pressure(pres, no2, 'median');
-            return 
+            return
             
-%             % old way, would need for true box plots
-%             [binned_no2, binned_pres] = bin_omisp_pressure(pres, no2, 'binonly');
-%             % Because BOXPLOT is pretty simpleminded, we need to make the
-%             % values and pressures vectors equal lengths
-%             box_vals = veccat(binned_no2{:});
-%             box_pres = nan(size(box_vals));
-%             i = 1;
-%             for a=1:numel(binned_no2)
-%                 j = i + numel(binned_no2{a}) - 1;
-%                 box_pres(i:j) = binned_pres(a);
-%                 i = j + 1;
-%             end
-%             
-%             box_nans = isnan(box_vals);
-%             box_vals(box_nans) = [];
-%             box_pres(box_nans) = [];
+            %             % old way, would need for true box plots
+            %             [binned_no2, binned_pres] = bin_omisp_pressure(pres, no2, 'binonly');
+            %             % Because BOXPLOT is pretty simpleminded, we need to make the
+            %             % values and pressures vectors equal lengths
+            %             box_vals = veccat(binned_no2{:});
+            %             box_pres = nan(size(box_vals));
+            %             i = 1;
+            %             for a=1:numel(binned_no2)
+            %                 j = i + numel(binned_no2{a}) - 1;
+            %                 box_pres(i:j) = binned_pres(a);
+            %                 i = j + 1;
+            %             end
+            %
+            %             box_nans = isnan(box_vals);
+            %             box_vals(box_nans) = [];
+            %             box_pres(box_nans) = [];
         end
         
         function [aircraft_comp, pandora_comp] = match_aircraft_and_pandora_sites(aircraft_comp, pandora_comp, varargin)
@@ -1082,6 +1082,7 @@ classdef misc_behr_v3_validation
                         else
                             data_substruct.x = data_substruct.(opts.x_var);
                         end
+                            
                         data_substruct.y = data_substruct.(opts.y_var);
                     end
                     data_substruct.campaign = opts.campaigns{i_cam};
@@ -1114,7 +1115,7 @@ classdef misc_behr_v3_validation
             y = veccat(y, 33.5207);
             names = veccat(names, {'Birmingham'});
             
-            % Control which ones should be aligned right instead to avoid 
+            % Control which ones should be aligned right instead to avoid
             % overlapping names
             sites_align_right = {'Birmingham'};
             
@@ -1152,7 +1153,7 @@ classdef misc_behr_v3_validation
                 slopes.(discover_campaigns{i_cam}).behr_no2 = fit_info.behr_no2{xx};
             end
         end
-    
+        
         function [unwt_avg, unwt_std, wt_avg, wt_std] = average_aircraft_pandora_slopes(air_data, pandora_data)
             air = [air_data.P]';
             % Concatenating P should alternate slope, intercept, slope,
@@ -1171,6 +1172,10 @@ classdef misc_behr_v3_validation
             sum_n = air_n + pandora_n;
             wt_avg = (air .* air_n + pandora .* pandora_n)./sum_n;
             wt_std = sqrt( ( air_n ./ sum_n .* air_std ).^2 + ( pandora_n ./ sum_n .* pandora_std ).^2 );
+        end
+        
+        function xx_not_outlier = is_not_outlier(x,y)
+            xx_not_outlier = ~isoutlier(x) & ~isoutlier(y);
         end
         
         %%%%%%%%%%%%%%%%%%%%%%
@@ -1215,8 +1220,10 @@ classdef misc_behr_v3_validation
             p.addParameter('campaigns',{});
             p.addParameter('remove_neg_vcd', []);
             p.addParameter('extend_method', '');
+            p.addParameter('force_origin', nan);
             p.addParameter('swap_md', nan)
             p.addParameter('return_as_table', nan);
+            p.addParameter('remove_outliers', nan);
             
             p.parse(varargin{:});
             pout = p.Results;
@@ -1232,8 +1239,11 @@ classdef misc_behr_v3_validation
             
             campaigns = pout.campaigns;
             extend_method = opt_ask_multichoice('Which profile extension method to use?', misc_behr_v3_validation.profile_extend_methods, pout.extend_method, 'extend_method', 'list', true);
+            do_remove_outliers = opt_ask_yn('Remove outliers?', pout.remove_outliers, '"remove_outliers"');
+            force_origin = opt_ask_yn('Force fits through origin?', pout.force_origin, '"force_origin"');
             do_swap_monthly_daily = opt_ask_yn('Swap monthly/daily prof aircraft VCDs?', pout.swap_md, '"swap_md"');
             return_as_table = opt_ask_yn('Return as table (not array)?', pout.return_as_table, '"return_as_table"');
+            
             
             remove_neg_vcd = opt_ask_yn('Remove negative VCDs?', pout.remove_neg_vcd, '"remove_neg_vcd"',...
                 'test_fxn', @(x) islogical(x) && (isscalar(x) || numel(x) == numel(campaigns)), 'ask_condition', @isempty,...
@@ -1274,8 +1284,8 @@ classdef misc_behr_v3_validation
                 version = 'both';
             end
             
-            common_opts = {'data_source', data_source, 'extend_method', extend_method, 'prof_mode', prof_mode, 'version', version, 'time_range', time_range, 'remove_outliers', true, 'plot_type', 'scatter',...
-                'color_by', 'none', 'match_pandora_aircraft', false};
+            common_opts = {'data_source', data_source, 'extend_method', extend_method, 'prof_mode', prof_mode, 'version', version, 'time_range', time_range, 'remove_outliers', do_remove_outliers, 'plot_type', 'scatter',...
+                'color_by', 'none', 'match_pandora_aircraft', false, 'force_origin', force_origin};
             
             for i_var = 1:2
                 x_var = allowed_vars{1, i_var};
@@ -1290,11 +1300,11 @@ classdef misc_behr_v3_validation
             % Ultimately want the table to look like
             %
             %                              | Slope | Intercept | R2 or p-value |
-            %            | SP   | v2       |       |           |               | 
-            %   campaign |      | v3       |       |           |               | 
-            %            | BEHR | v2       |       |           |               | 
-            %            |      | v3 (M)   |       |           |               | 
-            %            |      | v3 (D)   |       |           |               | 
+            %            | SP   | v2       |       |           |               |
+            %   campaign |      | v3       |       |           |               |
+            %            | BEHR | v2       |       |           |               |
+            %            |      | v3 (M)   |       |           |               |
+            %            |      | v3 (D)   |       |           |               |
             row_names = {};
             values = [];
             section_end_rows = [];
@@ -1304,7 +1314,7 @@ classdef misc_behr_v3_validation
                 if remove_neg_vcd(i_campaign)
                     vcd_str = ' (V > 0)';
                 else
-                	vcd_str = '';
+                    vcd_str = '';
                 end
                 for i_prod = 1:numel(products)
                     substruct = fit_data.(products{i_prod}){i_campaign};
@@ -1336,6 +1346,10 @@ classdef misc_behr_v3_validation
             p.addParameter('extend_method', '');
             p.addParameter('plot_or_table', '');
             p.addParameter('products', {});
+            p.addParameter('remove_outliers', nan);
+            p.addParameter('force_origin', nan);
+            p.addParameter('swap_md', nan)
+            p.addParameter('return_as_table', nan);
             p.parse(varargin{:});
             pout = p.Results;
             
@@ -1361,18 +1375,28 @@ classdef misc_behr_v3_validation
                 end
                 product_inds = find(ismember(products, requested_products));
             end
+            
+            do_remove_outliers = opt_ask_yn('Remove outliers?', pout.remove_outliers, '"remove_outliers"');
+            force_origin = opt_ask_yn('Force fits through origin?', pout.force_origin, '"force_origin"');
+            do_swap_monthly_daily = opt_ask_yn('Swap monthly/daily prof aircraft VCDs?', pout.swap_md, '"swap_md"');
+            
+            
             product_helper = product_helper(product_inds);
             product_formats = product_formats(product_inds);
             
             is_plot = strcmpi(plot_or_table, 'plot');
             is_table = strcmpi(plot_or_table, 'table');
             
+            if is_table
+                return_as_table = opt_ask_yn('Return as table (not array)?', pout.return_as_table, '"return_as_table"');
+            end
+            
             discover_campaigns = misc_behr_v3_validation.discover_campaigns;
             
-            [~, ~, rownames_aircraft, ~, fit_data_aircraft] = misc_behr_v3_validation.tabulate_insitu_comparisons('campaigns', discover_campaigns,...
-                'remove_neg_vcd', [false, false, false, true], 'data_source', 'aircraft', 'extend_method', extend_method);
-            [~, ~, rownames_pandora, ~, fit_data_pandora] = misc_behr_v3_validation.tabulate_insitu_comparisons('campaigns', discover_campaigns,...
-                'remove_neg_vcd', [false, false, false, true], 'data_source', 'pandora');
+            common_opts = {'campaigns', discover_campaigns, 'remove_neg_vcd', [false, false, false, true], 'extend_method', extend_method, 'force_origin', force_origin,...
+                'swap_md', do_swap_monthly_daily, 'return_as_table', false, 'remove_outliers', do_remove_outliers};
+            [~, ~, rownames_aircraft, ~, fit_data_aircraft] = misc_behr_v3_validation.tabulate_insitu_comparisons(common_opts{:}, 'data_source', 'aircraft');
+            [~, ~, rownames_pandora, ~, fit_data_pandora] = misc_behr_v3_validation.tabulate_insitu_comparisons(common_opts{:}, 'data_source', 'pandora');
             
             air_slopes = misc_behr_v3_validation.gather_slopes(fit_data_aircraft, unique(rownames_aircraft(:, 1), 'stable'));
             pandora_slopes = misc_behr_v3_validation.gather_slopes(fit_data_pandora, unique(rownames_pandora(:, 1), 'stable'));
@@ -1429,8 +1453,19 @@ classdef misc_behr_v3_validation
             end
             
             if strcmpi(plot_or_table, 'table')
-                colnames = {'Campaign','Product','Avg. slope','Weighted avg. slope'};
-                varargout = {table_values, colnames, rownames};
+                
+                if return_as_table
+                    colnames = {'AvgSlope', 'AvgSlopeSigma', 'WtAvgSlope', 'WtAvgSlopeSigma'};
+                    t_rownames = cell(size(rownames,1),1);
+                    for i_row = 1:size(rownames,1)
+                        t_rownames{i_row} = strjoin(rownames(i_row,:), ': ');
+                    end
+                    varargout{1} = array2table(table_values, 'VariableNames', colnames, 'RowNames', t_rownames);
+                else
+                    colnames = {'Campaign','Product','Avg. slope','Weighted avg. slope'};
+                    varargout = {table_values, colnames, rownames};
+                end
+                
             elseif strcmpi(plot_or_table, 'plot')
                 xtick_labels = cellfun(@(x) strrep(upper(x), '_', '-'), discover_campaigns, 'uniformoutput', false);
                 varargout{1} = figure;
@@ -1470,6 +1505,7 @@ classdef misc_behr_v3_validation
             p.addParameter('match_pandora_aircraft', []);
             p.addParameter('remove_neg_sat', nan);
             p.addParameter('map_quantity', '');
+            p.addParameter('force_origin', nan);
             
             p.KeepUnmatched = true;
             
@@ -1497,7 +1533,7 @@ classdef misc_behr_v3_validation
                 E.badinput('plot_type must be one of: %s', strjoin(allowed_plot_types, ', '));
             end
             
-            allowed_color_bys = {'prof_max', 'prof_num', 'none'};
+            allowed_color_bys = {'prof_max', 'prof_num', 'date', 'none'};
             allowed_map_quantities = {'abs_diff', 'percent_diff', 'yx_ratio'};
             if strcmpi(plot_type, 'scatter')
                 if isempty(color_by)
@@ -1522,20 +1558,26 @@ classdef misc_behr_v3_validation
             end
             
             remove_neg_sat = opt_ask_yn('Remove negative satellite VCDs?', remove_neg_sat, '"remove_neg_sat"');
-
+            force_through_origin = opt_ask_yn('Force fit through origin?', pout.force_origin, '"force_origin"');
+            if force_through_origin
+                regression_type = 'orth-origin';
+            else
+                regression_type = 'RMA';
+            end
+            
             data_lines = gobjects(size(data_structs));
             fit_lines = gobjects(numel(data_structs),1);
             fit_legends = cell(size(fit_lines));
             line_fmts = struct('color', {'k','b','r', [0, 0.5, 0]}, 'marker', {'s','x','^','o'});
-            color_labels = struct('prof_max', 'Max [NO_2] (mixing ratio)', 'prof_num', 'Profile number', 'none', '');
+            color_labels = struct('prof_max', 'Max [NO_2] (mixing ratio)', 'prof_num', 'Profile number', 'date', '', 'none', '');
             fit_data = struct('P',[],'R2',[],'StdDevM',[],'StdDevB',[],'p_value',[], 'num_pts', [], 'is_significant', [], 'x_var', labels.x, 'y_var', labels.y, 'prof_type',legend_strings);
             keep_fit_data = false(size(fit_data));
             
+            is_aircraft = strcmpi(opts.data_source, 'aircraft');
             if match_pandora_aircraft
                 % Is what we were given pandora or aircraft data? If the
                 % time range is 12:30 to 14:30, then it's pandora,
                 % otherwise it's aircraft.
-                is_aircraft = ~strcmpi(opts.data_source, 'aircraft');
                 if is_aircraft
                     PTmp = load(misc_behr_v3_validation.pandora_comp_file);
                     pandora = PTmp.v2.us_monthly;
@@ -1601,6 +1643,12 @@ classdef misc_behr_v3_validation
                                 case 'prof_num'
                                     profile_numbers = cellfun(@str2double, this_struct.profile_ids);
                                     color_val = veccat(color_val, profile_numbers);
+                                case 'date'
+                                    if is_aircraft
+                                        color_val = cat(1, color_val, datenum(this_struct.profile_dates));
+                                    else
+                                        color_val = cat(1, color_val, this_struct.omi_time);
+                                    end
                                 case 'none'
                                     % do nothing
                                 otherwise
@@ -1648,13 +1696,13 @@ classdef misc_behr_v3_validation
                 
                 
                 if do_remove_outliers
-                    xx_keep = xx_keep & ~isoutlier(x_no2) & ~isoutlier(y_no2);
+                    xx_keep = xx_keep & misc_behr_v3_validation.is_not_outlier(x_no2, y_no2);
                 end
                 
                 if ~isempty(x_no2) && ~isempty(y_no2)
                     limits(1) = min([min(x_no2), min(y_no2)]);
                     limits(2) = max([max(x_no2), max(y_no2)]);
-                
+                    
                     if strcmpi(plot_type, 'scatter')
                         if strcmpi(color_by, 'none')
                             data_lines(a) = line(x_no2(xx_keep), y_no2(xx_keep), 'linestyle', 'none', 'color', line_fmts(a).color, 'marker', line_fmts(a).marker);
@@ -1663,10 +1711,15 @@ classdef misc_behr_v3_validation
                             if a == 1
                                 cb = colorbar;
                                 cb.Label.String = color_labels.(color_by);
+                                if strcmpi(color_by, 'date')
+                                    cbdatetick(cb);
+                                    cb.TicksMode = 'manual';
+                                    cb.FontSize = 8;
+                                end
                             end
                             hold on
                         end
-                        [fit_x, fit_y, fit_legends{a}, fit_data_tmp] = calc_fit_line(x_no2(xx_keep), y_no2(xx_keep), 'regression', 'RMA', 'xcoord', [-1e17, 1e17], 'significance', true);
+                        [fit_x, fit_y, fit_legends{a}, fit_data_tmp] = calc_fit_line(x_no2(xx_keep), y_no2(xx_keep), 'regression', regression_type, 'xcoord', [-1e17, 1e17], 'significance', true);
                         fit_lines(a) = line(fit_x, fit_y, 'color', line_fmts(a).color, 'linestyle', '--');
                         
                         fit_data(a) = copy_structure_fields(fit_data_tmp, fit_data(a), fieldnames(fit_data_tmp));
@@ -1767,7 +1820,7 @@ classdef misc_behr_v3_validation
             end
         end
         
-        function plot_aircraft_vs_pandora_locations(varargin)
+        function [pandora_far_coords, pandora_close_coords, aircraft_coords, cluster_coords] = plot_aircraft_vs_pandora_locations(varargin)
             %
             p = inputParser;
             p.addParameter('campaigns', {});
@@ -1804,8 +1857,10 @@ classdef misc_behr_v3_validation
             end
             
             aircraft_coords = [];
+            cluster_coords = [];
             pandora_close_coords = [];
             pandora_far_coords = [];
+            
             
             for i_campaign = 1:numel(campaigns)
                 pandora_comp = pandoras.v3.us_monthly.(campaigns{i_campaign}).t1230_1430;
@@ -1814,19 +1869,34 @@ classdef misc_behr_v3_validation
                 [~, pandora_close_comp] = misc_behr_v3_validation.match_aircraft_and_pandora_sites(aircraft_comp, pandora_comp);
                 xx_far = ~ismember(pandora_comp.profile_lon, pandora_close_comp.profile_lon) & ~ismember(pandora_comp.profile_lat, pandora_close_comp.profile_lat);
                 
-                aircraft_coords = cat(1, aircraft_coords, [aircraft_comp.profile_lon(:), aircraft_comp.profile_lat(:)]);
+                this_aircraft_coords = [aircraft_comp.profile_lon(:), aircraft_comp.profile_lat(:)];
+                aircraft_coords = cat(1, aircraft_coords, this_aircraft_coords);
                 platlon_far_temp = unique([pandora_comp.profile_lon(xx_far), pandora_comp.profile_lat(xx_far)],'rows');
                 pandora_far_coords = cat(1, pandora_far_coords, platlon_far_temp);
                 platlon_close_temp = unique([pandora_close_comp.profile_lon(:), pandora_close_comp.profile_lat(:)],'rows');
                 pandora_close_coords = cat(1, pandora_close_coords, platlon_close_temp);
+                
+                % If we're doing a discover campaign, try to cluster the
+                % aircraft profiles using kmeans so that we get one point
+                % per profile.
+                if regcmpi(campaigns{i_campaign}, '^discover')
+                    profnums = cellfun(@(x) floor(str2double(x)/1000), aircraft_comp.profile_ids);
+                    n_profs = numel(unique(profnums));
+                    [~, this_cluster_means] = kmeans(this_aircraft_coords, n_profs);
+                    cluster_coords = cat(1, cluster_coords, this_cluster_means);
+                end
             end
-            
+            leg_strs = {'Pandora too far', 'Pandora nearby', 'Aircraft'};
             figure;
-            l(1) = line(aircraft_coords(:,1), aircraft_coords(:,2), 'marker', 's', 'linestyle', 'none', 'color', 'b');
-            l(2) = line(pandora_far_coords(:,1), pandora_far_coords(:,2), 'marker', 'x', 'linestyle', 'none', 'color', 'r');
-            l(3) = line(pandora_close_coords(:,1), pandora_close_coords(:,2), 'marker', 'x', 'linestyle', 'none', 'color', [0 0.5 0]);
+            l(1) = line(pandora_far_coords(:,1), pandora_far_coords(:,2), 'marker', 'x', 'linestyle', 'none', 'color', 'r');
+            l(2) = line(pandora_close_coords(:,1), pandora_close_coords(:,2), 'marker', 'x', 'linestyle', 'none', 'color', [0 0.5 0]);
+            l(3) = line(aircraft_coords(:,1), aircraft_coords(:,2), 'marker', 's', 'linestyle', 'none', 'color', 'b');
+            if ~isempty(cluster_coords)
+                l(4) = line(cluster_coords(:,1), cluster_coords(:,2), 'marker', '^', 'linestyle', 'none', 'color', 'c');
+                leg_strs{end+1} = 'Aircraft cluster';
+            end
             state_outlines('k');
-            legend(l(:), {'Aircraft', 'Pandora too far', 'Pandora nearby'});
+            legend(l(:), leg_strs);
         end
         
         function plot_measured_no2(varargin)
@@ -2089,7 +2159,7 @@ classdef misc_behr_v3_validation
             air_no2 = air_no2(xx_sort);
             
             % Scale pressure to make the scatter a reasonable size.
-            size_from_pres = scale_to_range(air_pres, [50 200]);   
+            size_from_pres = scale_to_range(air_pres, [50 200]);
             
             figure;
             pcolor(wrf_loncorn, wrf_latcorn, wrf_no2);
@@ -2745,7 +2815,7 @@ classdef misc_behr_v3_validation
             
             fig = figure;
             if include_diffs
-                subplot_x = 2; 
+                subplot_x = 2;
             else
                 subplot_x = 1;
             end
@@ -2924,11 +2994,12 @@ classdef misc_behr_v3_validation
             warning('on', 'fitting:nans_removed')
         end
         
-        function plot_vcd_prof_ensembles(varargin)
+        function figs = plot_vcd_prof_ensembles(varargin)
             p = advInputParser;
             p.addParameter('extend_methods', {});
             p.addParameter('prof_type', '');
             p.addParameter('campaigns', {});
+            p.addParameter('title', true);
             p.parse(varargin{:});
             pout = p.Results;
             
@@ -2944,42 +3015,114 @@ classdef misc_behr_v3_validation
             
             available_campaigns = misc_behr_v3_validation.list_available_campaigns(comp_structs.(extend_methods{1}), prof_type);
             campaigns = opt_ask_multiselect('Which campaign(s) to include?', available_campaigns, pout.campaigns, '"campaigns"');
+            
+            include_title = pout.title;
+            
             prof_fn = sprintf('us_%s', prof_type);
             figs = gobjects(size(campaigns));
-            mode_colors = {'r','b','g'};
+            extend_plot_fmts = struct('wrf', struct('linecolor', 'r', 'envcolor', [1 0.5 0], 'legend_str', 'WRF-Chem'),...
+                'geos', struct('linecolor', 'b', 'envcolor', 'c', 'legend_str', 'GEOS-Chem'),...
+                'extrap', struct('linecolor', [0 0.5 0], 'envcolor', 'g', 'legend_str', 'Extrapolation'));
+            
             for i_cam = 1:numel(campaigns)
                 this_campaign = campaigns{i_cam};
                 figs(i_cam) = figure;
                 
-                l = gobjects(2*numel(extend_methods),1);
-                legend_str = cell(1,2*numel(extend_methods));
+                l = gobjects(numel(extend_methods),1);
+                legend_str = cell(1,numel(extend_methods));
                 for i_extend = 1:numel(extend_methods)
                     this_extend = extend_methods{i_extend};
-                    mode_color = mode_colors{i_extend};
+                    plot_fmt = extend_plot_fmts.(this_extend);
+                    prof_color = plot_fmt.linecolor;
+                    env_color = plot_fmt.envcolor;
                     details_struct = comp_structs.(this_extend).v3.(prof_fn).(this_campaign).t1200_1500.details;
-                    by_2_ind = (i_extend-1)*2+1;
-                    for i_prof = 1:numel(details_struct)
-                        
-                        pres = details_struct(i_prof).binned_pressure;
-                        if isempty(pres)
-                            continue
-                        end
-                        
-                        prof = details_struct(i_prof).binned_profile;
-                        xx_appended = details_struct(i_prof).is_appended_or_interpolated == 1;
-                        l(by_2_ind) = line(prof(~xx_appended), pres(~xx_appended), 'color', mode_color, 'linestyle', '-');
-                        legend_str{by_2_ind} = this_extend;
-                        prof(~xx_appended) = nan;
-                        l(by_2_ind+1) = line(prof, pres, 'color', mode_color, 'linestyle', '--');
-                        legend_str{by_2_ind+1} = sprintf('%s (extension)', this_extend);
-                    end
+                    prof_ens = cat(1, details_struct.binned_profile)'*1e9;
+                    % These should be all at the same level, but this will
+                    % inherently deal with empty pres values
+                    prof_pres = nanmean(cat(1, details_struct.binned_pressure)',2);
+                    
+                    [prof_mean, ~, ~, l(i_extend)] = plot_profile_envelope(prof_ens, prof_pres, 'quantile', [0.1 0.9], 'linecolor', prof_color, 'envcolor', env_color, 'envalpha', 0.5);
+                    legend_str{i_extend} = plot_fmt.legend_str;
+                    was_app_mat = cat(1, details_struct.is_appended_or_interpolated)';
+                    xx_appended = sum(was_app_mat == 1,2)/size(was_app_mat, 2) > 0.5;
+                    prof_mean(~xx_appended) = nan;
+                    line(prof_mean, prof_pres, 'color', prof_color, 'linestyle', 'none', 'marker', 'o', 'linewidth', 1);
+                    %legend_str{by_2_ind+1} = sprintf('%s (extension)', this_extend);
                 end
                 legend(l, legend_str);
-                xlabel('[NO_2]');
+                xlabel('[NO_2] (ppbv)');
                 ylabel('Pressure (hPa)');
-                set(gca,'ydir','reverse');
-                title(this_campaign);
+                set(gca,'ydir','reverse','fontsize',16);
+                xlim(max(get(gca,'xlim'),0));
+                ylim([0 1050]);
+                if include_title
+                    title(this_campaign);
+                end
             end
+        end
+        
+        function plot_campaign_boxplots(varargin)
+            p = advInputParser;
+            p.addParameter('campaigns', {});
+            p.addParameter('extend_method', '');
+            
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            aircraft = load(misc_behr_v3_validation.profile_comp_file(pout.extend_method));
+            pandora = load(misc_behr_v3_validation.pandora_comp_file);
+            
+            campaigns = opt_ask_multiselect('Which campaigns?', fieldnames(pandora.v3.us_monthly), pout.campaigns, '"campaigns"');
+            all_versions = {'v2','v3'};
+            
+            air_labels = {'Air SP %s','SP %s-air', 'Air BEHR %s', 'BEHR %s-air'};
+            daily_labels = {'Air BEHR %s (D)', 'BEHR %s (D)-air'};
+            pandora_labels = {'Pandora-%s', 'SP %s-Pan', 'BEHR %s-Pan'};
+            daily_pan_labels = {'BEHR %s (D)-Pan'};
+            for i_cam = 1:numel(campaigns)
+                this_campaign = campaigns{i_cam};
+                for i_vers = 1:numel(all_versions)
+                    version = all_versions{i_vers};
+                    this_air = aircraft.(version).us_monthly.(this_campaign).t1200_1500;
+                    data = {this_air.air_no2_nasa, this_air.sp_no2, this_air.air_no2_behr, this_air.behr_no2};
+                    labels = air_labels;
+                    
+                    is_daily = isfield(aircraft.(version), 'us_daily') && ~isempty(aircraft.(version).us_daily.(this_campaign).t1200_1500);
+                    if is_daily
+                        this_daily_air = aircraft.(version).us_daily.(this_campaign).t1200_1500;
+                        data = veccat(data, {this_daily_air.air_no2_behr, this_daily_air.behr_no2});
+                        labels = veccat(labels, daily_labels);
+                    end
+                    
+                    this_pan = pandora.(version).us_monthly.(this_campaign).t1230_1430;
+                    data = veccat(data, {this_pan.pandora_no2,  this_pan.sp_no2, this_pan.behr_no2});
+                    labels = veccat(labels, pandora_labels);
+                    if is_daily
+                        this_daily_pan = pandora.(version).us_daily.(this_campaign).t1230_1430;
+                        data = veccat(data, {this_daily_pan.behr_no2});
+                        labels = veccat(labels, daily_pan_labels);
+                    end
+                    
+                    labels = cprintf(labels, version);
+                    misc_behr_v3_validation.boxplot_helper(data, labels);
+                    title(upper(strrep(this_campaign, '_', '-')));
+                end
+            end
+        end
+        
+        function fig = boxplot_helper(x_data, labels)
+            xall = [];
+            gall = [];
+            for i_dat = 1:numel(x_data)
+                x = x_data{i_dat}(:);
+                xall = cat(1, xall, x);
+                gall = cat(1, gall, i_dat * ones(size(x)));
+            end
+            
+            fig = figure;
+            boxplot(xall,gall,'labels',labels);
+            ylabel('VCD (molec cm^{-2})');
+            set(gca,'ygrid','on','fontsize',14,'XTickLabelRotation',30)
         end
         
         %%%%%%%%%%%%%%%%%%%%%%
@@ -3068,7 +3211,7 @@ classdef misc_behr_v3_validation
                 locs(isite) = [];
                 
             end
-
+            
             misc_behr_v3_validation.save_scd_results(misc_behr_v3_validation.scd_comp_file, results, eval_opts(1:end-1));
         end
         
@@ -3168,8 +3311,8 @@ classdef misc_behr_v3_validation
             end
             
             if opt_ask_yn('Remove outliers?', remove_outliers, 'remove_outliers')
-                not_out1 = ~isoutlier(data1.x) & ~isoutlier(data1.y);
-                not_out2 = ~isoutlier(data2.x) & ~isoutlier(data2.y);
+                not_out1 = misc_behr_v3_validation.is_not_outlier(data1.x, data1.y);
+                not_out2 = misc_behr_v3_validation.is_not_outlier(data2.x, data2.y);
             else
                 not_out1 = true(size(data1.x));
                 not_out2 = true(size(data2.x));
@@ -3180,6 +3323,8 @@ classdef misc_behr_v3_validation
             
             [is_significant, t] = slope_significant_difference( fit1_info.P, fit1_info.StdDevM, numel(data1.x), fit2_info.P, fit2_info.StdDevM, numel(data2.x) );
         end
+        
+        
     end
     
     methods(Static = true, Access = private)
@@ -3250,19 +3395,19 @@ classdef misc_behr_v3_validation
                 struct_type = 'pandora';
                 plot_vars = {'pandora_no2', 'sp_no2', 'behr_no2'};
                 labels = struct('pandora_no2', 'Pandora NO_2 VCD (molec. cm^{-2})',...
-                'sp_no2', 'NASA NO_2 VCD (molec. cm^{-2})',...
-                'behr_no2', 'BEHR NO_2 VCD (molec. cm^{-2})');
+                    'sp_no2', 'NASA NO_2 VCD (molec. cm^{-2})',...
+                    'behr_no2', 'BEHR NO_2 VCD (molec. cm^{-2})');
             else
                 struct_type = 'aircraft';
                 plot_vars = {'air_no2_nasa', 'air_no2_behr', 'sp_no2', 'behr_no2'};
                 labels = struct('air_no2_nasa', 'Aircraft NO_2 VCD (molec. cm^{-2})',...
-                'air_no2_behr', 'Aircraft NO_2 VCD (molec. cm^{-2})',...
-                'sp_no2', 'NASA NO_2 VCD (molec. cm^{-2})',...
-                'behr_no2', 'BEHR NO_2 VCD (molec. cm^{-2})');
+                    'air_no2_behr', 'Aircraft NO_2 VCD (molec. cm^{-2})',...
+                    'sp_no2', 'NASA NO_2 VCD (molec. cm^{-2})',...
+                    'behr_no2', 'BEHR NO_2 VCD (molec. cm^{-2})');
             end
         end
         
-        function campaigns = list_available_campaigns(comp_struct, prof_mode) 
+        function campaigns = list_available_campaigns(comp_struct, prof_mode)
             prof_fn = sprintf('us_%s', prof_mode);
             substruct = comp_struct.v3.(prof_fn);
             campaigns = fieldnames(substruct);
