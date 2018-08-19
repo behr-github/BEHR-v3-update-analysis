@@ -956,7 +956,8 @@ classdef misc_behr_v3_validation
                 if strcmpi(data_source, 'pandora')
                     comp_struct = load(misc_behr_v3_validation.pandora_comp_file);
                 else
-                    comp_struct = load(misc_behr_v3_validation.profile_comp_file(misc_behr_v3_validation.get_profile_extend_method(prof_extend_method)));
+                    opts.extend_method = misc_behr_v3_validation.get_profile_extend_method(prof_extend_method);
+                    comp_struct = load(misc_behr_v3_validation.profile_comp_file(opts.extend_method));
                 end
             end
             
@@ -1089,6 +1090,45 @@ classdef misc_behr_v3_validation
                     data_structs{i_dat}(i_cam) = data_substruct;
                 end
             end
+            
+            dum=1;
+        end
+        
+        function [data_struct, air_opts, pan_opts] = load_combined_aircraft_pandora(varargin)
+            p = advInputParser;
+            p.addParameter('match', false);
+            p.KeepUnmatched = true;
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            match_aircraft_pandora = pout.match;
+            
+            [data_struct, air_opts] = misc_behr_v3_validation.load_comparison_data(varargin{:}, 'data_source', 'aircraft');
+            
+            x_var = air_opts.x_var;
+            if regcmp(x_var, '^air')
+                x_var = 'pandora_no2';
+            end
+            y_var = air_opts.y_var;
+            if regcmp(y_var, '^air')
+                y_var = 'pandora_no2';
+            end
+            
+            [pan_data, pan_opts] = misc_behr_v3_validation.load_comparison_data(air_opts, 'data_source', 'pandora', 'x_var', x_var, 'y_var', y_var, 'time_range', 't1230_1430');
+            
+            for i_dat = 1:numel(data_struct)
+                if ~isfield(data_struct{i_dat}, 'x')
+                    continue
+                end
+                
+                if match_aircraft_pandora
+                    [data_struct{i_dat}, pan_data{i_dat}] = misc_behr_v3_validation.match_aircraft_and_pandora_sites(data_struct{i_dat}, pan_data{i_dat}, 'match_time', true);
+                end
+                
+                
+                data_struct{i_dat}.x = veccat(data_struct{i_dat}.x, pan_data{i_dat}.x);
+                data_struct{i_dat}.y = veccat(data_struct{i_dat}.y, pan_data{i_dat}.y);
+            end
         end
         
         function plot_sites(ax, varargin)
@@ -1154,7 +1194,7 @@ classdef misc_behr_v3_validation
             end
         end
         
-        function [unwt_avg, unwt_std, wt_avg, wt_std] = average_aircraft_pandora_slopes(air_data, pandora_data)
+        function [unwt_avg, unwt_std, wt_avg, wt_std, wt_eff_sample_size] = average_aircraft_pandora_slopes(air_data, pandora_data)
             air = [air_data.P]';
             % Concatenating P should alternate slope, intercept, slope,
             % intercepts, etc. We just want the slopes.
@@ -1170,12 +1210,98 @@ classdef misc_behr_v3_validation
             unwt_std = sqrt( (0.5 .* air_std).^2 + (0.5 .* pandora_std).^2 );
             
             sum_n = air_n + pandora_n;
-            wt_avg = (air .* air_n + pandora .* pandora_n)./sum_n;
-            wt_std = sqrt( ( air_n ./ sum_n .* air_std ).^2 + ( pandora_n ./ sum_n .* pandora_std ).^2 );
+            air_wt = air_n / sum_n;
+            pandora_wt = pandora_n / sum_n;
+            wt_avg = air .* air_wt + pandora .* pandora_wt;
+            wt_std = sqrt( ( air_wt .* air_std ).^2 + ( pandora_wt .* pandora_std ).^2 );
+            both_wts = [air_wt, pandora_wt];
+            
+            % I'm taking the definition of effective sample size from http://www.analyticalgroup.com/download/Alternative%20Approaches.pdf
+            wt_eff_sample_size = nansum(both_wts).^2/nansum(both_wts.^2);
         end
         
         function xx_not_outlier = is_not_outlier(x,y)
             xx_not_outlier = ~isoutlier(x) & ~isoutlier(y);
+        end
+        
+        function [fit_data, fit_line, varargout] = calculate_fit(x_no2, y_no2, varargin)
+            E = JLLErrors;
+            p = advInputParser;
+            p.addParameter('remove_outliers',nan);
+            p.addParameter('remove_neg_sat', nan);
+            p.addParameter('force_origin', nan);
+            
+            p.KeepUnmatched = true;
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            do_remove_outliers = pout.remove_outliers;
+            do_remove_neg_sat = pout.remove_neg_sat;
+            if pout.force_origin
+                regression_type = 'orth-origin';
+            else
+                regression_type = 'rma';
+            end
+            
+            % Make these parameters to be consistent with the other
+            % methods, so that parameters can just be all passed to this
+            % function.
+            if any(structfun(@isnan, pout))
+                E.badinput('All parameters (%s) must be given', strjoin(fieldnames(pout), ', '));
+            end
+            
+            if strcmpi(x_no2, 'load')
+                [data, opts] = misc_behr_v3_validation.load_comparison_data(y_no2{:});
+                varargout{1} = opts;
+            elseif strcmpi(x_no2, 'load-combined')
+                [data, air_opts, pan_opts] = misc_behr_v3_validation.load_combined_aircraft_pandora(y_no2{:});
+                varargout = {air_opts, pan_opts};
+            else
+                data{1}.x = x_no2;
+                data{1}.y = y_no2;
+            end
+            
+            for i_dat = 1:numel(data)
+                if ~isfield(data{i_dat}, 'x')
+                    continue
+                end
+                
+                x = data{i_dat}.x;
+                y = data{i_dat}.y;
+                
+                xx_keep = true(size(x));
+                
+                xx_keep = xx_keep & (~isnan(x) & ~isnan(y));
+                
+                % Temporary until I fix the imaginary column issue
+                not_imag = difftol(imag(x), zeros(size(x))) & difftol(imag(y), zeros(size(y)));
+                xx_keep = xx_keep & not_imag;
+                
+                if do_remove_neg_sat
+                    xx_keep = xx_keep & x >= 0 & y >= 0;
+                end
+                
+                
+                if do_remove_outliers
+                    % Must remove the points we're not considering for
+                    % other reasons before removing outliers. Trying to
+                    % keep xx_keep the length of the original data vectors
+                    % so that it can be returned to cut down other vectors
+                    % if necessary.
+                    xx_keep(xx_keep) = xx_keep(xx_keep) & misc_behr_v3_validation.is_not_outlier(x(xx_keep), y(xx_keep));
+                end
+                [fit_line(i_dat).x, fit_line(i_dat).y, fit_line(i_dat).legend, fit_data(i_dat)] = calc_fit_line(x(xx_keep), y(xx_keep), 'regression', regression_type, 'xcoord', [-1e17, 1e17], 'significance', true);
+                
+            end
+            
+            function [x, y] = check_data(data)
+                if isscalar(data)
+                    x = data.x;
+                    y = data.y;
+                else
+                    E.notimplemented('getting multiple data structures simultaneously');
+                end
+            end
         end
         
         %%%%%%%%%%%%%%%%%%%%%%
@@ -1224,6 +1350,7 @@ classdef misc_behr_v3_validation
             p.addParameter('swap_md', nan)
             p.addParameter('return_as_table', nan);
             p.addParameter('remove_outliers', nan);
+            p.addParameter('fit_quantities', '');
             
             p.parse(varargin{:});
             pout = p.Results;
@@ -1243,7 +1370,8 @@ classdef misc_behr_v3_validation
             force_origin = opt_ask_yn('Force fits through origin?', pout.force_origin, '"force_origin"');
             do_swap_monthly_daily = opt_ask_yn('Swap monthly/daily prof aircraft VCDs?', pout.swap_md, '"swap_md"');
             return_as_table = opt_ask_yn('Return as table (not array)?', pout.return_as_table, '"return_as_table"');
-            
+            fit_quantities = opt_ask_multichoice('Include slopes and std dev. or slope, int, R2?', {'std. dev.', 'int+R2'}, pout.fit_quantities, '"fit_quantities"', 'list', true);
+            do_intercept_r2 = strcmpi(fit_quantities, 'int+R2');
             
             remove_neg_vcd = opt_ask_yn('Remove negative VCDs?', pout.remove_neg_vcd, '"remove_neg_vcd"',...
                 'test_fxn', @(x) islogical(x) && (isscalar(x) || numel(x) == numel(campaigns)), 'ask_condition', @isempty,...
@@ -1312,7 +1440,7 @@ classdef misc_behr_v3_validation
             product_table_names = {'SP','BEHR'};
             for i_campaign = 1:numel(campaigns)
                 if remove_neg_vcd(i_campaign)
-                    vcd_str = ' (V > 0)';
+                    vcd_str = ' ($V > 0$)';
                 else
                     vcd_str = '';
                 end
@@ -1320,7 +1448,12 @@ classdef misc_behr_v3_validation
                     substruct = fit_data.(products{i_prod}){i_campaign};
                     for i_sub = 1:numel(substruct)
                         this_row_names = {sprintf('%s%s', upper(strrep(campaigns{i_campaign},'_', '-')), vcd_str), sprintf('%s %s', product_table_names{i_prod}, substruct(i_sub).prof_type)};
-                        this_row_values = [substruct(i_sub).P(1), substruct(i_sub).P(2), substruct(i_sub).R2];
+                        if do_intercept_r2
+                            this_row_values = [substruct(i_sub).P(1), substruct(i_sub).P(2), substruct(i_sub).R2];
+                        else
+                            this_row_values = [substruct(i_sub).P(1), substruct(i_sub).StdDevM];
+                        end
+                        
                         row_names = cat(1, row_names, this_row_names);
                         values = cat(1, values, this_row_values);
                     end
@@ -1328,7 +1461,11 @@ classdef misc_behr_v3_validation
                 section_end_rows = veccat(section_end_rows, size(values,1));
             end
             
-            column_names = {'Campaign', 'Product', 'Slope','Intercept','$R^2$'};
+            if do_intercept_r2
+                column_names = {'Campaign', 'Product', 'Slope','Intercept','$R^2$'};
+            else
+                column_names = {'Campaign', 'Product', 'Slope'};
+            end
             
             if return_as_table
                 column_names{end} = 'R2';
@@ -1337,6 +1474,93 @@ classdef misc_behr_v3_validation
                     table_row_names{i_row} = strjoin(row_names(i_row, :), ': ');
                 end
                 values = array2table(values, 'RowNames', table_row_names, 'VariableNames', column_names(3:end));
+            end
+        end
+        
+        function [values, colnames, rownames, samples, extra_hlines] = make_aircraft_pandora_combo(varargin)
+            % This one regresses aircraft and pandora together, rather than
+            % averaging their slopes after the fact.
+            p = advInputParser;
+            p.addParameter('return_as_table', true);
+            p.addParameter('products', {});
+            p.addParameter('fit_quantities', '');
+            p.KeepUnmatched = true;
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            % These have an obvious default if running interactively
+            do_return_as_table = pout.return_as_table;
+            products_to_keep = pout.products;
+            
+            % These do not, so ask
+            fit_quantities = opt_ask_multichoice('Include slopes and std dev. or slope, int, R2?', {'std. dev.', 'int+R2'}, pout.fit_quantities, '"fit_quantities"', 'list', true);
+            do_intercept_r2 = strcmpi(fit_quantities, 'int+R2');
+            
+            campaigns = misc_behr_v3_validation.discover_campaigns;
+            variables = {'air_no2_nasa', 'sp_no2';...
+                'air_no2_behr', 'behr_no2'};
+            values = [];
+            rownames = {};
+            samples = [];
+            extra_hlines = logical([]);
+            for i_cam = 1:numel(campaigns)
+                this_campaign = campaigns{i_cam};
+                for i_var = 1:size(variables)
+                    air_var = variables{i_var, 1};
+                    sat_var = variables{i_var, 2};
+                    data_opts = {'data_source','aircraft','extend_method','geos','x_var',air_var,'y_var',sat_var,...
+                        'prof_mode','both','campaigns',{this_campaign},'time_range','t1200_1500','version','both'};
+                    [fit_data_match, ~, air_opts] = misc_behr_v3_validation.calculate_fit('load-combined', [data_opts, 'match', true], 'remove_outliers', true, 'remove_neg_sat', true, 'force_origin', false);
+                    fit_data_all = misc_behr_v3_validation.calculate_fit('load-combined', [data_opts, 'match', false], 'remove_outliers', true, 'remove_neg_sat', true, 'force_origin', false);
+                    
+                    if numel(fit_data_match) ~= numel(fit_data_all)
+                        E.notimplemented('The matched and all fits returned different numbers of structures');
+                    end
+                    
+                    for i_fit = 1:numel(fit_data_match)
+                        this_rowname = {upper(strrep(this_campaign, '_', '-')), sprintf('%s %s', air_opts.title_product_str, air_opts.legend_strings{i_fit})};
+                        % Easier way to homogenize this with the average table
+                        this_rowname = strrep(this_rowname, 'NASA', 'SP');
+                        if ~isempty(products_to_keep) && ~ismember(this_rowname{2}, products_to_keep)
+                            continue
+                        end
+                        if do_intercept_r2
+                            these_vals = [fit_data_match(i_fit).P(1), fit_data_match(i_fit).P(2), fit_data_match(i_fit).R2, fit_data_all(i_fit).P(1), fit_data_all(i_fit).P(2), fit_data_all(i_fit).R2];
+                        else
+                            these_vals = [fit_data_match(i_fit).P(1), fit_data_match(i_fit).StdDevM, fit_data_all(i_fit).P(1), fit_data_all(i_fit).StdDevM];
+                        end
+                        values = cat(1, values, these_vals);
+                        samples = cat(1, samples, [fit_data_match(i_fit).num_pts, fit_data_all(i_fit).num_pts]);
+                        rownames = cat(1, rownames, this_rowname);
+                        extra_hlines = cat(1, extra_hlines, false);
+                    end
+                end
+                % Mark the last line of each campaign to have a horizontal
+                % line after it.
+                extra_hlines(end) = true;
+            end
+            
+            
+            
+            if do_return_as_table
+                if do_intercept_r2
+                    colnames = {'MatchedData','MatchedDataSigma','AllData','AllDataSigma'};
+                else
+                    colnames = {'MatchedSlope', 'MatchedInt', 'MatchedR2', 'AllSlope', 'AllInt', 'AllR2'};
+                end
+                
+                for i_row = 1:size(rownames,1)
+                    table_rownames{i_row} = strjoin(rownames(i_row, :), ': ');
+                end
+                values = array2table(values, 'RowNames', table_rownames, 'VariableNames', colnames);
+            else
+                if do_intercept_r2
+                    colnames = {'', '', 'Matched Data', 'Matched Data', 'Matched Data', 'All Data', 'All Data', 'All Data';...
+                        'Campaign', 'Product', 'Slope', 'Intercept', 'R2', 'Slope', 'Intercept', 'R2'};
+                else
+                    colnames = {'Campaign', 'Product', 'Slope (Matched)', 'Slope (All)'};
+                end
+                
             end
         end
         
@@ -1367,6 +1591,9 @@ classdef misc_behr_v3_validation
             
             extend_method = opt_ask_multichoice('Which profile extend method to use for the aircraft data', misc_behr_v3_validation.profile_extend_methods, pout.extend_method, '"extend_method"', 'list', true);
             plot_or_table = opt_ask_multichoice('Make a plot of slopes or return information for a table?', {'plot', 'table'}, pout.plot_or_table, '"plot_or_table"', 'list', true);
+            is_plot = strcmpi(plot_or_table, 'plot');
+            is_table = strcmpi(plot_or_table, 'table');
+            
             if isempty(requested_products)
                 product_inds = ask_multiselect('Which products to include?', products, 'returnindex', true);
             else
@@ -1380,12 +1607,10 @@ classdef misc_behr_v3_validation
             force_origin = opt_ask_yn('Force fits through origin?', pout.force_origin, '"force_origin"');
             do_swap_monthly_daily = opt_ask_yn('Swap monthly/daily prof aircraft VCDs?', pout.swap_md, '"swap_md"');
             
-            
             product_helper = product_helper(product_inds);
             product_formats = product_formats(product_inds);
             
-            is_plot = strcmpi(plot_or_table, 'plot');
-            is_table = strcmpi(plot_or_table, 'table');
+            
             
             if is_table
                 return_as_table = opt_ask_yn('Return as table (not array)?', pout.return_as_table, '"return_as_table"');
@@ -1405,6 +1630,7 @@ classdef misc_behr_v3_validation
             
             if is_table
                 table_values = [];
+                sample_sizes = [];
                 rownames = {};
             elseif is_plot
                 plot_empty_array = nan(numel(discover_campaigns), numel(product_helper));
@@ -1432,7 +1658,7 @@ classdef misc_behr_v3_validation
                         end
                     end
                     
-                    [unwt_avg, unwt_std, wt_avg, wt_std] = misc_behr_v3_validation.average_aircraft_pandora_slopes(air_behr, pandora_behr);
+                    [unwt_avg, unwt_std, wt_avg, wt_std, wt_eff_sample_size] = misc_behr_v3_validation.average_aircraft_pandora_slopes(air_behr, pandora_behr);
                     
                     
                     if is_table
@@ -1441,6 +1667,7 @@ classdef misc_behr_v3_validation
                         rownames = cat(1, rownames, these_rownames);
                         
                         table_values = cat(1, table_values, [unwt_avg, unwt_std, wt_avg, wt_std]);
+                        sample_sizes = cat(1, sample_sizes, [2, wt_eff_sample_size]);
                     elseif is_plot
                         plot_unwt_values(i_cam, i_prod) = unwt_avg;
                         plot_unwt_err(i_cam, i_prod) = unwt_std;
@@ -1453,7 +1680,6 @@ classdef misc_behr_v3_validation
             end
             
             if strcmpi(plot_or_table, 'table')
-                
                 if return_as_table
                     colnames = {'AvgSlope', 'AvgSlopeSigma', 'WtAvgSlope', 'WtAvgSlopeSigma'};
                     t_rownames = cell(size(rownames,1),1);
@@ -1461,9 +1687,10 @@ classdef misc_behr_v3_validation
                         t_rownames{i_row} = strjoin(rownames(i_row,:), ': ');
                     end
                     varargout{1} = array2table(table_values, 'VariableNames', colnames, 'RowNames', t_rownames);
+                    varargout{2} = sample_sizes;
                 else
                     colnames = {'Campaign','Product','Avg. slope','Weighted avg. slope'};
-                    varargout = {table_values, colnames, rownames};
+                    varargout = {table_values, colnames, rownames, sample_sizes};
                 end
                 
             elseif strcmpi(plot_or_table, 'plot')
@@ -2720,7 +2947,7 @@ classdef misc_behr_v3_validation
                     contribution_quantiles(:, i_month, i_param) = quantile(abs(this_norm_perdiff),[0.05;0.95]);
                 end
                 subplot(3,2,i_month);
-                perdiff = sqrt(pAvg.getWeightedAverage());
+                perdiff = sqrt(pAvg.values());
                 mean_contributions(i_month, end) = nanmean(abs(perdiff(:)));
                 contribution_sigmas(i_month, end) = nanstd(abs(perdiff(:)));
                 median_contributions(i_month, end) = nanmedian(abs(perdiff(:)));
@@ -3125,6 +3352,129 @@ classdef misc_behr_v3_validation
             set(gca,'ygrid','on','fontsize',14,'XTickLabelRotation',30)
         end
         
+        
+        function [unwt_table, wt_table] = are_avg_slopes_different(varargin)
+            E = JLLErrors;
+            
+            p = advInputParser;
+            p.addParameter('avg_or_combo', '');
+            p.KeepUnmatched = true;
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            avg_or_combo = opt_ask_multichoice('Use the average or combined aircraft and Pandora slopes?', {'avg', 'combo'}, pout.avg_or_combo, '"avg_or_combo"', 'list', true);
+            
+            switch lower(avg_or_combo)
+                case 'avg'
+                    [slopes_and_stds, ~, rownames, samples] = misc_behr_v3_validation.make_aircraft_pandora_avg(varargin{:}, 'plot_or_table', 'table', 'return_as_table', false);
+                case 'combo'
+                    [slopes_and_stds, ~, rownames, samples] = misc_behr_v3_validation.make_aircraft_pandora_combo(varargin{:}, 'return_as_table', false);
+                otherwise
+                    E.notimplemented('No action for case = %s', avg_or_combo);
+            end
+            slopes = slopes_and_stds(:, 1:2:end);
+            stddevs = slopes_and_stds(:,2:2:end);
+            
+            comp_mat = build_comp_mat(rownames);
+            labels = cell(size(rownames,1), 1);
+            for i=1:numel(labels)
+                labels{i} = strjoin(rownames(i,:), ' ');
+                labels{i} = regexprep(capitalize_words(labels{i}), '\W', '');
+            end
+            
+            unwt_table = misc_behr_v3_validation.display_slope_sig_diff(slopes(:,1), stddevs(:,1), samples(:,1), 'labels', labels, 'do_comp', comp_mat);
+            wt_table = misc_behr_v3_validation.display_slope_sig_diff(slopes(:,2), stddevs(:,2), samples(:,2), 'labels', labels, 'do_comp', comp_mat);
+            
+            function mat = build_comp_mat(rows)
+                % We want to compare three/five pairs within each campaign:
+                % SP v3.0 <-> BEHR v3.0 (M/D), BEHR v2.1C <-> BEHR v3.0
+                % (M/D), and BEHR v3.0 (M) <-> BEHR v3.0 (D)
+                mat = false(size(rows,1));
+                pairs = {'SP v3\.0', 'BEHR v3\.0. \(M\)';...
+                    'SP v3\.0', 'BEHR v3\.0. \(D\)';...
+                    'BEHR v2\.1.', 'BEHR v3\.0. \(M\)';...
+                    'BEHR v2\.1.', 'BEHR v3\.0. \(D\)';...
+                    'BEHR v3\.0. \(M\)', 'BEHR v3\.0. \(D\)'};
+                u_cams = unique(rows(:,1));
+                for i_cam = 1:numel(u_cams)
+                    for i_pair = 1:size(pairs,1)
+                        [pair_i, pair_j] = find_pair_inds(rows, u_cams{i_cam}, pairs{i_pair, 1}, pairs{i_pair, 2});
+                        if ~isempty(pair_i) && ~isempty(pair_j)
+                            mat(pair_i, pair_j) = true;
+                        end
+                    end
+                end
+            end
+            
+            function [i,j] = find_pair_inds(rows, campaign, first_name, second_name)
+                xx_cam = strcmp(rows(:,1), campaign);
+                xx_1 = regcmp(rows(:,2), first_name);
+                xx_2 = regcmp(rows(:,2), second_name);
+                i = find(xx_cam & xx_1);
+                j = find(xx_cam & xx_2);
+                
+                if numel(i) > 1 || numel(j) > 1
+                    E.callError('pair_matching:multiple_found', 'More than one match found for a pair of products');
+                end
+            end
+        end
+        
+        function out = display_slope_sig_diff(slopes, std_devs, n_pts, varargin)
+            % Given a list 
+            
+            p = advInputParser;
+            p.addParameter('do_comp', []);
+            p.addParameter('labels', {});
+            p.addParameter('out_format', 'table');
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            do_comp_matrix = pout.do_comp;
+            labels = pout.labels;
+            out_format = pout.out_format;
+            
+            if isempty(do_comp_matrix)
+                do_comp_matrix = true(numel(slopes));
+            end
+            if isempty(labels)
+                labels = num2cell(1:numel(slopes));
+                labels = cellfun(@num2str, labels, 'uniformoutput', false);
+            end
+            
+            allowed_out_fmts = {'table', 'array', 'plot'};
+            if ~ismember(out_format, allowed_out_fmts)
+                E.badinput('"out_format" can only be one of: %s', strjoin(allowed_out_fmts, ', '));
+            end
+            
+            is_diff = nan(numel(slopes));
+            
+            for i=1:numel(slopes)
+                for j=i+1:numel(slopes)
+                    if do_comp_matrix(i,j) || do_comp_matrix(j,i)
+                        is_diff(i,j) = slope_significant_difference( slopes(i), std_devs(i), n_pts(i), slopes(j), std_devs(j), n_pts(j));
+                    end
+                end
+            end
+            
+            switch lower(out_format)
+                case 'table'
+                    str_cell = cell(size(is_diff));
+                    for i_cell = 1:numel(is_diff)
+                        if is_diff(i_cell) == 0
+                            str_cell{i_cell} = 'n';
+                        elseif is_diff(i_cell) == 1
+                            str_cell{i_cell} = 'y';
+                        end
+                    end
+                    out = cell2table(str_cell, 'RowNames', labels, 'VariableNames', labels);
+                case 'array'
+                    out = is_diff;
+                case 'plot'
+                    E.notimplemented('plotting')
+                otherwise
+                    E.notimplemented(out_format)
+            end
+        end
         %%%%%%%%%%%%%%%%%%%%%%
         % Analysis functions %
         %%%%%%%%%%%%%%%%%%%%%%
@@ -3270,25 +3620,37 @@ classdef misc_behr_v3_validation
             
         end
         
+        
+        
         function [is_significant, t] = calculate_slope_significant_difference(varargin)
             p = inputParser;
             p.addParameter('slope1_args', {});
             p.addParameter('slope2_args', {});
             p.addParameter('match_pandora_aircraft', nan);
             p.addParameter('remove_outliers', nan);
+            p.addParameter('combine_air_pan', nan);
+            p.addParameter('plot', true);
             
             p.parse(varargin{:});
             pout = p.Results;
             
             slope1_args = pout.slope1_args;
             slope2_args = pout.slope2_args;
-            match_pandora_aircraft = pout.match_pandora_aircraft;
             remove_outliers = pout.remove_outliers;
+            do_plot = pout.plot;
+            do_combine_aircraft_pandora = opt_ask_yn('Combine aircraft and Pandora observations?', pout.combine_air_pan, '"combine_air_pan"');
+            if do_combine_aircraft_pandora
+                match_pandora_aircraft = opt_ask_yn('Subset the data so that only sites/times with Pandora and aircraft data are used?', pout.match_pandora_aircraft, 'match_pandora_aircraft');
+                load_fxn = @misc_behr_v3_validation.load_comparison_data;
+            else
+                load_fxn = @misc_behr_v3_validation.load_combined_aircraft_pandora;
+            end
+            
             
             fprintf('Loading data for slope 1...\n');
-            [data_structs_1, opts1] = misc_behr_v3_validation.load_comparison_data(slope1_args{:});
+            [data_structs_1, opts1] = load_fxn(slope1_args{:}, 'match', match_pandora_aircraft);
             fprintf('Loading data for slope 2...\n');
-            [data_structs_2, opts2] = misc_behr_v3_validation.load_comparison_data(slope2_args{:});
+            [data_structs_2, opts2] = load_fxn(slope2_args{:},  'match', match_pandora_aircraft);
             
             if numel(data_structs_1) > 1 || numel(data_structs_2) > 1
                 E.notimplemented('comparing multiple slopes at once');
@@ -3298,7 +3660,7 @@ classdef misc_behr_v3_validation
             data2 = data_structs_2{1};
             
             data_types = {opts1.data_source, opts2.data_source};
-            if all(ismember({'pandora', 'aircraft'}, data_types))
+            if ~do_combine_aircraft_pandora && all(ismember({'pandora', 'aircraft'}, data_types))
                 % If we have both a pandora and aircraft measurement, offer
                 % the option to match them
                 if opt_ask_yn('Subset the data so that only sites/times with Pandora and aircraft data are used?', match_pandora_aircraft, 'match_pandora_aircraft')
@@ -3318,8 +3680,17 @@ classdef misc_behr_v3_validation
                 not_out2 = true(size(data2.x));
             end
             
-            [~,~,~,fit1_info] = calc_fit_line(data1.x(not_out1), data1.y(not_out1), 'regression', 'rma');
-            [~,~,~,fit2_info] = calc_fit_line(data2.x(not_out2), data2.y(not_out2), 'regression', 'rma');
+            [line1x,line1y,line1_legstr,fit1_info] = calc_fit_line(data1.x(not_out1), data1.y(not_out1), 'regression', 'rma', 'xcoord', [-1e17 1e17]);
+            [line2x,line2y,line2_legstr,fit2_info] = calc_fit_line(data2.x(not_out2), data2.y(not_out2), 'regression', 'rma', 'xcoord', [-1e17 1e17]);
+            
+            if do_plot
+                figure;
+                line(data1.x(not_out1), data1.y(not_out1), 'color', 'b', 'marker', 's', 'linestyle', 'none');
+                l(1) = line(line1x, line1y, 'color', 'b');
+                line(data2.x(not_out2), data2.y(not_out2), 'color', 'r', 'marker', 'x', 'linestyle', 'none');
+                l(2) = line(line2x, line2y, 'color', 'r');
+                legend(l', {line1_legstr, line2_legstr});
+            end
             
             [is_significant, t] = slope_significant_difference( fit1_info.P, fit1_info.StdDevM, numel(data1.x), fit2_info.P, fit2_info.StdDevM, numel(data2.x) );
         end
