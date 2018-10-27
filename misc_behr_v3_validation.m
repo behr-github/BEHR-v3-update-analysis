@@ -236,7 +236,7 @@ classdef misc_behr_v3_validation
                             % Right now I only have Pandora data for the
                             % four DISCOVER campaigns.
                             all_campaigns = {'discover_md','discover_ca','discover_tx','discover_co'};
-                            time_windows = 1;
+                            time_windows = [0.25 0.5 1];
                         else
                             E.notimplemented('No input settings for data source = %s', data_source);
                         end
